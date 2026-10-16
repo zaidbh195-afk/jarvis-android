@@ -3,9 +3,11 @@ package com.technicalbase.jarvis
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.net.VpnService as AndroidVpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
@@ -59,6 +61,23 @@ class MainActivity : AppCompatActivity() {
         })
 
         layout.addView(Button(this).apply {
+            text = "4. Disable battery optimization"
+            setOnClickListener {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                    refresh()
+                } else {
+                    val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    i.data = Uri.parse("package:$packageName")
+                    try { startActivity(i) }
+                    catch (_: Exception) {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                }
+            }
+        })
+
+        layout.addView(Button(this).apply {
             text = "Refresh status"
             setOnClickListener { refresh() }
         })
@@ -78,13 +97,17 @@ class MainActivity : AppCompatActivity() {
         val svcOn = com.technicalbase.jarvis.service.AccessibilityService.instance != null
         val vpnReady = AndroidVpnService.prepare(this) == null
         val vpnRunning = com.technicalbase.jarvis.service.VpnService.instance != null
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val batteryOK = pm.isIgnoringBatteryOptimizations(packageName)
+        val server = com.technicalbase.jarvis.bridge.LocalServer.isRunning()
 
         status.text = buildString {
             appendLine("Jarvis v0.1.0")
-            appendLine("Server        : 127.0.0.1:8766")
+            appendLine("Server        : ${if (server) "8766 (up)" else "stopped"}")
             appendLine("Accessibility : ${if (svcOn) "ON" else "off"}")
             appendLine("VPN ready     : ${if (vpnReady) "yes" else "no — tap 3"}")
             appendLine("VPN active    : ${if (vpnRunning) "yes" else "no"}")
+            appendLine("Battery opt   : ${if (batteryOK) "exempt" else "restricted — tap 4"}")
         }
     }
 
