@@ -207,17 +207,50 @@ class LocalServer(
     private fun handleTtsStop(): Response =
         ok(JSONObject().put("note", "no persistent tts handle"))
 
-    private fun handleLockdownStart(session: IHTTPSession): Response =
-        err("lockdown requires VPN service (next step)")
+    private fun handleLockdownStart(session: IHTTPSession): Response {
+    val b = body(session)
+    val dur = b.optInt("duration_min", 30)
+    val reason = b.optString("reason", "")
+    val kind = if (reason.startsWith("keyword")) "keyword" else "manual"
 
-    private fun handleLockdownStop(): Response = err("lockdown not active")
+    // Prepare VPN consent if not already granted
+    val prep = android.net.VpnService.prepare(context)
+    if (prep != null) {
+        prep.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(prep)
+        return err("vpn permission required — approve in the dialog", Response.Status.ACCEPTED)
+    }
 
-    private fun handleLockdownState(): Response =
-        json(Response.Status.OK, JSONObject().apply {
-            put("active", false)
-            put("kind", "none")
-            put("deadline_ms", 0)
-        })
+    com.technicalbase.jarvis.service.VpnService.start(
+        context, dur, kind, reason
+    )
+    return ok(JSONObject().apply {
+        put("duration_min", dur)
+        put("kind", kind)
+        put("reason", reason)
+    })
+}
+
+private fun handleLockdownStop(): Response {
+    val svc = com.technicalbase.jarvis.service.VpnService.instance
+        ?: return err("vpn not running")
+    val st = svc.getState()
+    if (st.optString("kind") == "keyword" && st.optBoolean("active")) {
+        return err("keyword lockdown cannot be cancelled")
+    }
+    com.technicalbase.jarvis.service.VpnService.stop(context)
+    return ok(JSONObject().put("stopped", true))
+}
+
+private fun handleLockdownState(): Response {
+    val svc = com.technicalbase.jarvis.service.VpnService.instance
+    val o = svc?.getState() ?: JSONObject().apply {
+        put("active", false)
+        put("kind", "none")
+        put("deadline_ms", 0L)
+    }
+    return json(Response.Status.OK, o)
+}
 
     private fun handleAccessClick(session: IHTTPSession): Response {
     val text = body(session).optString("text", "")
