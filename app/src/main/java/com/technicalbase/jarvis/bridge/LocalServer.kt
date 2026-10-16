@@ -3,6 +3,7 @@ package com.technicalbase.jarvis.bridge
 import android.content.Context
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
+import android.accessibilityservice.AccessibilityService
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -91,13 +92,15 @@ class LocalServer(
             uri == "/lockdown/start" && method == Method.POST -> handleLockdownStart(session)
             uri == "/lockdown/stop" && method == Method.POST -> handleLockdownStop()
             uri == "/lockdown/state" && method == Method.GET -> handleLockdownState()
-            uri == "/access/foreground" && method == Method.GET -> handleForeground()
             uri == "/access/screen_text" && method == Method.GET -> handleScreenText()
             uri == "/access/focused_text" && method == Method.GET -> handleFocusedText()
-            uri == "/access/click" && method == Method.POST -> err("accessibility service not enabled yet")
-            uri == "/access/type" && method == Method.POST -> err("accessibility service not enabled yet")
-            uri == "/access/back" && method == Method.POST -> err("accessibility service not enabled yet")
-            uri == "/access/home" && method == Method.POST -> err("accessibility service not enabled yet")
+            uri == "/access/foreground" && method == Method.GET -> handleForeground()
+            uri == "/app/force_stop" && method == Method.POST -> handleForceStop(session)
+            uri == "/access/click" && method == Method.POST -> handleAccessClick(session)
+            uri == "/access/type" && method == Method.POST -> handleAccessType(session)
+            uri == "/access/back" && method == Method.POST -> handleGlobal(AccessibilityService.GLOBAL_ACTION_BACK)
+            uri == "/access/home" && method == Method.POST -> handleGlobal(AccessibilityService.GLOBAL_ACTION_HOME)
+            uri == "/access/recents" && method == Method.POST -> handleGlobal(AccessibilityService.GLOBAL_ACTION_RECENTS)
             uri == "/os/lock" && method == Method.POST -> err("device admin not configured")
             uri == "/os/power" && method == Method.POST -> err("device admin not configured")
             uri == "/alert" && method == Method.POST -> handleAlert(session)
@@ -137,9 +140,33 @@ class LocalServer(
     }
 
     private fun handleForceStop(session: IHTTPSession): Response {
-        val pkg = body(session).optString("package", "")
-        if (pkg.isBlank()) return err("package required")
-        return err("force-stop requires accessibility service (next step)")
+    val pkg = body(session).optString("package", "")
+    if (pkg.isBlank()) return err("package required")
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+        ?: return err("accessibility service not enabled")
+
+    return try {
+        // Open app info via Settings
+        val i = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        i.data = android.net.Uri.parse("package:$pkg")
+        i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(i)
+
+        // Small delay for Settings to open, then tap Force stop
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                svc.clickByText("Force stop")
+                // Confirm dialog
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    try { svc.clickByText("OK") } catch (_: Exception) {}
+                }, 400)
+            } catch (_: Exception) {}
+        }, 700)
+
+        ok(JSONObject().put("package", pkg).put("via", "settings_flow"))
+    } catch (e: Exception) {
+        err("force-stop failed: ${e.message}", Response.Status.INTERNAL_ERROR)
+    }
     }
 
     private fun handleUrlOpen(session: IHTTPSession): Response {
@@ -192,14 +219,48 @@ class LocalServer(
             put("deadline_ms", 0)
         })
 
-    private fun handleForeground(): Response =
-        json(Response.Status.OK, JSONObject().put("package", ""))
+    private fun handleAccessClick(session: IHTTPSession): Response {
+    val text = body(session).optString("text", "")
+    if (text.isBlank()) return err("text required")
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+        ?: return err("accessibility service not enabled")
+    return if (svc.clickByText(text)) ok(JSONObject().put("clicked", text))
+           else err("no matching node for '$text'")
+}
 
-    private fun handleScreenText(): Response =
-        json(Response.Status.OK, JSONObject().put("text", ""))
+private fun handleAccessType(session: IHTTPSession): Response {
+    val text = body(session).optString("text", "")
+    if (text.isBlank()) return err("text required")
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+        ?: return err("accessibility service not enabled")
+    return if (svc.typeText(text)) ok(JSONObject().put("typed", true))
+           else err("no focused editable field")
+}
 
-    private fun handleFocusedText(): Response =
-        json(Response.Status.OK, JSONObject().put("text", ""))
+private fun handleGlobal(action: Int): Response {
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+        ?: return err("accessibility service not enabled")
+    val okk = svc.performGlobalAction(action)
+    return ok(JSONObject().put("action", action).put("success", okk))
+}
+
+private fun handleForeground(): Response {
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+    val pkg = svc?.currentForeground() ?: ""
+    return json(Response.Status.OK, JSONObject().put("package", pkg))
+}
+
+private fun handleScreenText(): Response {
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+    val t = svc?.readScreenText() ?: ""
+    return json(Response.Status.OK, JSONObject().put("text", t))
+}
+
+private fun handleFocusedText(): Response {
+    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance
+    val t = svc?.readFocusedText() ?: ""
+    return json(Response.Status.OK, JSONObject().put("text", t))
+}
 
     private fun handleAlert(session: IHTTPSession): Response {
         val b = body(session)
