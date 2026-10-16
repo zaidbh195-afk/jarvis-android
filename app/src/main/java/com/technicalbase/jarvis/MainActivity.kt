@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -15,6 +16,8 @@ import com.technicalbase.jarvis.service.ForegroundService
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var status: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -23,24 +26,52 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 96, 48, 48)
         }
 
-        val status = TextView(this).apply {
-            text = "Jarvis v0.1.0\n\nServer: not started"
-            textSize = 16f
+        status = TextView(this).apply {
+            textSize = 14f
         }
         layout.addView(status)
 
-        val btn = Button(this).apply {
-            text = "Start Jarvis"
+        layout.addView(Button(this).apply {
+            text = "1. Start Jarvis"
             setOnClickListener {
                 requestNotifications()
                 val i = Intent(this@MainActivity, ForegroundService::class.java)
                 ContextCompat.startForegroundService(this@MainActivity, i)
-                status.text = "Jarvis v0.1.0\n\nServer: starting on 127.0.0.1:8766"
+                refresh()
             }
-        }
-        layout.addView(btn)
+        })
+
+        layout.addView(Button(this).apply {
+            text = "2. Enable Accessibility"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        })
+
+        layout.addView(Button(this).apply {
+            text = "Refresh status"
+            setOnClickListener { refresh() }
+        })
 
         setContentView(layout)
+        refresh()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refresh()
+    }
+
+    private fun refresh() {
+        val svcOn = com.technicalbase.jarvis.service.AccessibilityService.instance != null
+        status.text = buildString {
+            appendLine("Jarvis v0.1.0")
+            appendLine("Server   : 127.0.0.1:8766")
+            appendLine("Accessibility : ${if (svcOn) "ON" else "off"}")
+            appendLine()
+            append("If accessibility is off, tap button 2 and enable ")
+            append("\"Jarvis\" in the list.")
+        }
     }
 
     private fun requestNotifications() {
