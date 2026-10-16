@@ -1,5 +1,6 @@
 package com.technicalbase.jarvis.service
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -8,6 +9,7 @@ import android.net.VpnService as BaseVpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
@@ -30,11 +32,7 @@ class VpnService : BaseVpnService() {
             i.putExtra("duration_min", durationMin)
             i.putExtra("kind", kind)
             i.putExtra("reason", reason)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ctx.startForegroundService(i)
-            } else {
-                ctx.startService(i)
-            }
+            ctx.startForegroundService(i)
         }
 
         fun stop(ctx: Context) {
@@ -46,15 +44,32 @@ class VpnService : BaseVpnService() {
 
     private var tunnel: ParcelFileDescriptor? = null
     @Volatile private var blocked: Boolean = false
+    @Volatile private var tunnelReady: Boolean = false
     private var deadlineMs: Long = 0L
     private var kind: String = "none"
     private var reasonText: String = ""
     private val worker = Executors.newSingleThreadExecutor()
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action ?: return START_STICKY
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        createChannel()
+    }
 
-        // Load persisted state on any start
+    override fun onDestroy() {
+        instance = null
+        try { tunnel?.close() } catch (_: Exception) {}
+        tunnel = null
+        tunnelReady = false
+        super.onDestroy()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // MUST call startForeground() immediately — otherwise Android kills us
+        startForeground(NOTIF_ID, buildNotification("Jarvis VPN"))
+
+        val action = intent?.action ?: "RESTORE"
+
         if (action == "RESTORE" || deadlineMs == 0L) loadState()
 
         when (action) {
@@ -66,7 +81,7 @@ class VpnService : BaseVpnService() {
             }
             "STOP" -> {
                 if (kind == "keyword") {
-                    Log.w(TAG, "STOP refused — keyword lockdown active")
+                    Log.w(TAG, "STOP refused — keyword lockdown")
                 } else {
                     stopLockdown()
                 }
@@ -94,11 +109,12 @@ class VpnService : BaseVpnService() {
         saveState()
         establishTunnel()
         scheduleExpiry()
-        Log.i(TAG, "lockdown started until $deadlineMs kind=$k")
+        Log.i(TAG, "lockdown started until $deadlineMs kind=$k tunnel=$tunnelReady")
     }
 
     private fun stopLockdown() {
         blocked = false
+        tunnelReady = false
         deadlineMs = 0
         kind = "none"
         reasonText = ""
@@ -111,10 +127,8 @@ class VpnService : BaseVpnService() {
     }
 
     private fun establishTunnel() {
-        if (tunnel != null) return
+        if (tunnel != null && tunnelReady) return
 
-        // Simple: take over the whole network, route everything,
-        // but never forward packets while blocked=true.
         val builder = Builder()
             .setSession("Jarvis")
             .addAddress("10.111.222.1", 32)
@@ -126,26 +140,34 @@ class VpnService : BaseVpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            // Explicitly disallow our own app + Termux so we can still control it
+            try {
+                builder.addDisallowedApplication(packageName)
+                builder.addDisallowedApplication("com.termux")
+            } catch (_: Exception) {}
+        }
 
         tunnel = builder.establish()
         if (tunnel == null) {
-            Log.e(TAG, "establish() returned null — VPN permission missing")
+            Log.e(TAG, "establish() returned NULL — VPN permission missing")
+            tunnelReady = false
             return
         }
+        tunnelReady = true
 
-        // Drain loop: read and discard while blocked.
-        // When unblocked, we never established tunnel in the first place.
+        val fd = tunnel!!
         worker.execute {
-            val inStream = ParcelFileDescriptor.AutoCloseInputStream(tunnel!!)
+            val inStream = ParcelFileDescriptor.AutoCloseInputStream(fd)
             val buf = ByteArray(32767)
             try {
                 while (blocked && !Thread.currentThread().isInterrupted) {
                     val n = inStream.read(buf)
                     if (n < 0) break
-                    // Discard — this is the block
+                    // Discard
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "tunnel drain ended: ${e.message}")
+                Log.w(TAG, "drain ended: ${e.message}")
             } finally {
                 try { inStream.close() } catch (_: Exception) {}
             }
@@ -185,25 +207,26 @@ class VpnService : BaseVpnService() {
         } catch (e: Exception) { Log.w(TAG, "load: ${e.message}") }
     }
 
-    // Called by LocalServer for /lockdown/state
     fun getState(): JSONObject {
         val o = JSONObject()
         val now = System.currentTimeMillis()
         val remaining = maxOf(0L, deadlineMs - now)
-        val active = blocked && remaining > 0
+        val active = blocked && tunnelReady && remaining > 0
         o.put("active", active)
         o.put("kind", kind)
         o.put("deadline_ms", deadlineMs)
         o.put("remaining_ms", remaining)
         o.put("reason", reasonText)
+        o.put("tunnel", tunnelReady)
         return o
     }
 
     override fun onRevoke() {
         Log.w(TAG, "VPN revoked by system")
-        // If keyword lockdown, do not actually unblock — try to reestablish
+        tunnelReady = false
         if (kind == "keyword" && System.currentTimeMillis() < deadlineMs) {
             blocked = true
+            try { Thread.sleep(500) } catch (_: Exception) {}
             establishTunnel()
         } else {
             stopLockdown()
@@ -211,20 +234,21 @@ class VpnService : BaseVpnService() {
         super.onRevoke()
     }
 
-    override fun onDestroy() {
-        instance = null
-        try { tunnel?.close() } catch (_: Exception) {}
-        super.onDestroy()
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        instance = this
+    private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Jarvis VPN", NotificationManager.IMPORTANCE_LOW)
             )
         }
+    }
+
+    private fun buildNotification(text: String): Notification {
+        return NotificationCompat.Builder(this, CHANNEL)
+            .setContentTitle("Jarvis Lockdown")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.presence_busy)
+            .setOngoing(true)
+            .build()
     }
 }
