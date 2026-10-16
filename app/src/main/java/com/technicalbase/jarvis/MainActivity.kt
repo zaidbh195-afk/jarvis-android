@@ -3,6 +3,7 @@ package com.technicalbase.jarvis
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.VpnService as AndroidVpnService
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -26,17 +27,17 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 96, 48, 48)
         }
 
-        status = TextView(this).apply {
-            textSize = 14f
-        }
+        status = TextView(this).apply { textSize = 14f }
         layout.addView(status)
 
         layout.addView(Button(this).apply {
             text = "1. Start Jarvis"
             setOnClickListener {
                 requestNotifications()
-                val i = Intent(this@MainActivity, ForegroundService::class.java)
-                ContextCompat.startForegroundService(this@MainActivity, i)
+                ContextCompat.startForegroundService(
+                    this@MainActivity,
+                    Intent(this@MainActivity, ForegroundService::class.java)
+                )
                 refresh()
             }
         })
@@ -49,6 +50,15 @@ class MainActivity : AppCompatActivity() {
         })
 
         layout.addView(Button(this).apply {
+            text = "3. Grant VPN permission"
+            setOnClickListener {
+                val prep = AndroidVpnService.prepare(this@MainActivity)
+                if (prep != null) startActivityForResult(prep, 100)
+                else refresh()
+            }
+        })
+
+        layout.addView(Button(this).apply {
             text = "Refresh status"
             setOnClickListener { refresh() }
         })
@@ -57,20 +67,24 @@ class MainActivity : AppCompatActivity() {
         refresh()
     }
 
-    override fun onResume() {
-        super.onResume()
-        refresh()
+    override fun onResume() { super.onResume(); refresh() }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 100) refresh()
     }
 
     private fun refresh() {
         val svcOn = com.technicalbase.jarvis.service.AccessibilityService.instance != null
+        val vpnReady = AndroidVpnService.prepare(this) == null
+        val vpnRunning = com.technicalbase.jarvis.service.VpnService.instance != null
+
         status.text = buildString {
             appendLine("Jarvis v0.1.0")
-            appendLine("Server   : 127.0.0.1:8766")
+            appendLine("Server        : 127.0.0.1:8766")
             appendLine("Accessibility : ${if (svcOn) "ON" else "off"}")
-            appendLine()
-            append("If accessibility is off, tap button 2 and enable ")
-            append("\"Jarvis\" in the list.")
+            appendLine("VPN ready     : ${if (vpnReady) "yes" else "no — tap 3"}")
+            appendLine("VPN active    : ${if (vpnRunning) "yes" else "no"}")
         }
     }
 
