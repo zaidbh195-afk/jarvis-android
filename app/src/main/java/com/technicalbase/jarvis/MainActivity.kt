@@ -136,50 +136,84 @@ class MainActivity : AppCompatActivity() {
     }
 
     // --- SCREEN 3: HISTORY ---
-    private fun showHistoryScreen() {
-        mainContainer.removeAllViews()
-        mainContainer.addView(TextView(this).apply { text = "Project History"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
-        
-        val scroll = ScrollView(this)
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        scroll.addView(list)
-        mainContainer.addView(scroll)
-
-        val req = Request.Builder().url("http://127.0.0.1:8765/api/projects").build()
-        http.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { list.addView(TextView(this@MainActivity).apply { text = "Error: Is brain running?" }) }
-            }
-            override fun onResponse(call: Call, response: Response) {
-                val body = response.body?.string()
-                runOnUiThread {
-                    try {
-                        val o = JSONObject(body ?: "{}")
-                        val keys = o.keys()
-                        if (!keys.hasNext()) list.addView(TextView(this@MainActivity).apply { text = "No projects yet." })
-                        
-                        while (keys.hasNext()) {
-                            val id = keys.next()
-                            val proj = o.getJSONObject(id)
-                            val step = proj.optString("step_name", "Unknown")
-                            val progress = proj.optInt("progress", 0)
-                            val isActive = proj.optBoolean("active", false)
-                            val color = if(isActive) "#4CAF50" else "#888888"
-                            
-                            val btn = Button(this@MainActivity).apply {
-                                text = "$id\nStatus: $step ($progress%)"
-                                setTextColor(Color.parseColor(color))
-                                setOnClickListener { showStatusScreen(id) }
-                            }
-                            list.addView(btn)
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
-        })
-
-        mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
+private fun showHistoryScreen() {
+    mainContainer.removeAllViews()
+    
+    // --- NEW: Header with Clear Button ---
+    val headerLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.CENTER_VERTICAL
     }
+    
+    val title = TextView(this).apply { 
+        text = "Project History"; 
+        textSize = 20f; 
+        setTypeface(null, Typeface.BOLD) 
+        // This makes the title take up the left space, pushing the button to the right
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    }
+    headerLayout.addView(title)
+    
+    headerLayout.addView(Button(this).apply {
+        text = "Clear"
+        setOnClickListener {
+            // Send POST request to clear history
+            val req = Request.Builder()
+                .url("http://127.0.0.1:8765/api/projects/clear")
+                .post(RequestBody.create("application/json".toMediaType(), "{}"))
+                .build()
+                
+            http.newCall(req).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+                override fun onResponse(call: Call, response: Response) {
+                    runOnUiThread { showHistoryScreen() } // Refresh the screen
+                }
+            })
+        }
+    })
+    mainContainer.addView(headerLayout)
+    // -------------------------------------
+
+    val scroll = ScrollView(this)
+    val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    scroll.addView(list)
+    mainContainer.addView(scroll)
+
+    val req = Request.Builder().url("http://127.0.0.1:8765/api/projects").build()
+    http.newCall(req).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            runOnUiThread { list.addView(TextView(this@MainActivity).apply { text = "Error: Is brain running?" }) }
+        }
+        override fun onResponse(call: Call, response: Response) {
+            val body = response.body?.string()
+            runOnUiThread {
+                try {
+                    val o = JSONObject(body ?: "{}")
+                    val keys = o.keys()
+                    if (!keys.hasNext()) list.addView(TextView(this@MainActivity).apply { text = "No projects yet." })
+                    
+                    while (keys.hasNext()) {
+                        val id = keys.next()
+                        val proj = o.getJSONObject(id)
+                        val step = proj.optString("step_name", "Unknown")
+                        val progress = proj.optInt("progress", 0)
+                        val isActive = proj.optBoolean("active", false)
+                        val color = if(isActive) "#4CAF50" else "#888888"
+                        
+                        val btn = Button(this@MainActivity).apply {
+                            text = "$id\nStatus: $step ($progress%)"
+                            setTextColor(Color.parseColor(color))
+                            setOnClickListener { showStatusScreen(id) }
+                        }
+                        list.addView(btn)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    })
+
+    mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
+}
 
     // --- SCREEN 4: STATUS & WEBSITE LINK ---
     private fun showStatusScreen(projectId: String) {
