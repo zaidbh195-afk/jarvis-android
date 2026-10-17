@@ -13,7 +13,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
-import android.view.Gravity
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -103,7 +102,7 @@ class MainActivity : AppCompatActivity() {
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects").build()
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { list.addView(TextView(this@MainActivity).apply { text = "Error loading history. Is brain running?" }) }
+                runOnUiThread { list.addView(TextView(this@MainActivity).apply { text = "Error: Is brain running?" }) }
             }
             override fun onResponse(call: Call, response: Response) {
                 val body = response.body?.string()
@@ -111,6 +110,9 @@ class MainActivity : AppCompatActivity() {
                     try {
                         val o = JSONObject(body ?: "{}")
                         val keys = o.keys()
+                        if (!keys.hasNext()) {
+                            list.addView(TextView(this@MainActivity).apply { text = "No projects yet." })
+                        }
                         while (keys.hasNext()) {
                             val id = keys.next()
                             val proj = o.getJSONObject(id)
@@ -138,11 +140,11 @@ class MainActivity : AppCompatActivity() {
         mainContainer.addView(TextView(this).apply { text = "Project: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
 
         val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; visibility = View.VISIBLE
+            max = 100; visibility = View.VISIBLE; progress = 0
         }
         mainContainer.addView(progressBar)
 
-        val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16) }
+        val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16); text = "Loading..." }
         mainContainer.addView(progressText)
 
         val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY) }
