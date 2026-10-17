@@ -65,6 +65,52 @@ class MainActivity : AppCompatActivity() {
             text = "⚙️ Settings & Permissions"
             setOnClickListener { showSettingsScreen() }
         })
+
+        // --- RECENT PROCESS STATUS BAR ---
+        val recentStatusText = TextView(this).apply { 
+            text = "\nRecent Process:\nLoading status..."; 
+            textSize = 14f; 
+            setPadding(0, 40, 0, 0)
+            setTextColor(Color.GRAY)
+        }
+        mainContainer.addView(recentStatusText)
+
+        // Check for active processes
+        val req = Request.Builder().url("http://127.0.0.1:8765/api/projects").build()
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
+                runOnUiThread {
+                    try {
+                        val o = JSONObject(body ?: "{}")
+                        val keys = o.keys()
+                        var activeId = ""
+                        var activeStep = ""
+                        var activeProgress = 0
+                        
+                        while (keys.hasNext()) {
+                            val id = keys.next()
+                            val proj = o.getJSONObject(id)
+                            if (proj.optBoolean("active", false)) {
+                                activeId = id
+                                activeStep = proj.optString("step_name", "")
+                                activeProgress = proj.optInt("progress", 0)
+                            }
+                        }
+                        
+                        if (activeId.isNotEmpty()) {
+                            recentStatusText.text = "\n🟢 Active Process: $activeId\nStatus: $activeStep ($activeProgress%)"
+                            recentStatusText.setTextColor(Color.parseColor("#4CAF50"))
+                            recentStatusText.setOnClickListener { showStatusScreen(activeId) }
+                        } else {
+                            recentStatusText.text = "\nNo active processes running."
+                            recentStatusText.setTextColor(Color.GRAY)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        })
     }
 
     // --- SCREEN 2: NEW PROJECT ---
@@ -110,19 +156,22 @@ class MainActivity : AppCompatActivity() {
                     try {
                         val o = JSONObject(body ?: "{}")
                         val keys = o.keys()
-                        if (!keys.hasNext()) {
-                            list.addView(TextView(this@MainActivity).apply { text = "No projects yet." })
-                        }
+                        if (!keys.hasNext()) list.addView(TextView(this@MainActivity).apply { text = "No projects yet." })
+                        
                         while (keys.hasNext()) {
                             val id = keys.next()
                             val proj = o.getJSONObject(id)
                             val step = proj.optString("step_name", "Unknown")
                             val progress = proj.optInt("progress", 0)
+                            val isActive = proj.optBoolean("active", false)
+                            val color = if(isActive) "#4CAF50" else "#888888"
                             
-                            list.addView(Button(this@MainActivity).apply {
+                            val btn = Button(this@MainActivity).apply {
                                 text = "$id\nStatus: $step ($progress%)"
+                                setTextColor(Color.parseColor(color))
                                 setOnClickListener { showStatusScreen(id) }
-                            })
+                            }
+                            list.addView(btn)
                         }
                     } catch (_: Exception) {}
                 }
@@ -132,7 +181,7 @@ class MainActivity : AppCompatActivity() {
         mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
     }
 
-    // --- SCREEN 4: STATUS ---
+    // --- SCREEN 4: STATUS & WEBSITE LINK ---
     private fun showStatusScreen(projectId: String) {
         currentProjectId = projectId
         mainContainer.removeAllViews()
@@ -146,17 +195,28 @@ class MainActivity : AppCompatActivity() {
 
         val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16); text = "Loading..." }
         mainContainer.addView(progressText)
+        
+        // --- VIEW WEBSITE BUTTON ---
+        val viewSiteBtn = Button(this).apply {
+            text = "🌐 View Project on GitHub"
+            visibility = View.GONE
+            setOnClickListener {
+                val url = it.tag.toString()
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        }
+        mainContainer.addView(viewSiteBtn)
 
-        val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY) }
+        val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY); setPadding(0, 16, 0, 16) }
         mainContainer.addView(logText)
 
-        mainContainer.addView(Button(this).apply { text = "⬅ Back to History"; setOnClickListener { isPolling = false; showHistoryScreen() } })
+        mainContainer.addView(Button(this).apply { text = "⬅ Back to Home"; setOnClickListener { isPolling = false; showHomeScreen() } })
 
         isPolling = true
-        pollProjectStatus(projectId, progressBar, progressText, logText)
+        pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn)
     }
 
-    private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView) {
+    private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView, viewBtn: Button) {
         if (!isPolling || currentProjectId != id) return
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
         
@@ -173,21 +233,33 @@ class MainActivity : AppCompatActivity() {
                         
                         runOnUiThread {
                             pb.progress = progress
-                            pt.text = "Progress: $progress%\nStep: $step"
+                            pt.text = "Progress: $progress%\nStatus: $step"
                             
                             val logsArray = o.optJSONArray("logs")
                             if (logsArray != null) {
                                 val sb = StringBuilder()
-                                for (i in 0 until logsArray.length()) { sb.append(logsArray.getString(i)).append("\n") }
+                                for (i in 0 until logsArray.length()) { 
+                                    val logStr = logsArray.getString(i)
+                                    sb.append(logStr).append("\n")
+                                    // If log has project URL, show button
+                                    if (logStr.contains("Project URL:")) {
+                                        val url = logStr.substringAfter("Project URL:").trim()
+                                        viewBtn.visibility = View.VISIBLE
+                                        viewBtn.tag = url
+                                    }
+                                }
                                 lt.text = sb.toString()
                             }
-                            if (!active && progress == 100) pt.text = "Build Complete! Check GitHub."
+                            
+                            if (!active && progress == 100) {
+                                pt.text = "Build Complete!"
+                            }
                         }
                     } catch (_: Exception) {}
                 }
             }
         })
-        if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt) }, 2000)
+        if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn) }, 2000)
     }
 
     // --- HELPERS & SETTINGS ---
@@ -237,7 +309,7 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onResponse(call: Call, response: Response) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Build started! Go to History to track.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Build started!", Toast.LENGTH_LONG).show()
                     showHomeScreen()
                 }
             }
