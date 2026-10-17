@@ -58,16 +58,25 @@ class MainActivity : AppCompatActivity() {
 
         // --- NEW PROGRESS UI ---
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            visibility = View.GONE
-        }
-        layout.addView(progressBar)
+    max = 100
+    progress = 0
+    visibility = View.VISIBLE // Change to VISIBLE
+}
 
-        progressText = TextView(this).apply { textSize = 12f; visibility = View.GONE; setPadding(0, 16, 0, 16) }
-        layout.addView(progressText)
+progressText = TextView(this).apply { 
+    text = "Ready"
+    textSize = 12f
+    visibility = View.VISIBLE // Change to VISIBLE
+    setPadding(0, 16, 0, 16) 
+}
 
-        logText = TextView(this).apply { textSize = 10f; visibility = View.GONE; setTextColor(0xFF888888.toInt()) }
-        layout.addView(logText)
+logText = TextView(this).apply { 
+    text = "Logs will appear here..."
+    textSize = 10f
+    visibility = View.VISIBLE // Change to VISIBLE
+    setTextColor(0xFF888888.toInt()) 
+}
+
         // ------------------------
 
         layout.addView(Button(this).apply {
