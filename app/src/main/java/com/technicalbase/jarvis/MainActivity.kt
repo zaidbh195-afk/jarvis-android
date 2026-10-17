@@ -3,6 +3,8 @@ package com.technicalbase.jarvis
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.net.VpnService as AndroidVpnService
 import android.os.Build
@@ -11,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -24,141 +27,136 @@ import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var status: TextView
-    private lateinit var promptInput: EditText
-    
-    // Progress UI
-    private lateinit var progressBar: ProgressBar
-    private lateinit var progressText: TextView
-    private lateinit var logText: TextView
-
+    private lateinit var mainContainer: LinearLayout
     private val http = OkHttpClient()
     private val handler = Handler(Looper.getMainLooper())
     private var isPolling = false
+    private var currentProjectId = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestPermissions()
 
-        val layout = LinearLayout(this).apply {
+        mainContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
         }
-
-        status = TextView(this).apply { textSize = 14f }
-        layout.addView(status)
-
-        promptInput = EditText(this).apply { hint = "Type your problem statement..."; setMinLines(3) }
-        layout.addView(promptInput)
-
-        layout.addView(Button(this).apply {
-            text = "Send to Jarvis Brain"
-            setOnClickListener { sendPromptToBrain() }
-        })
-
-        // --- NEW PROGRESS UI ---
-        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-    max = 100
-    progress = 0
-    visibility = View.VISIBLE // Change to VISIBLE
-}
-
-progressText = TextView(this).apply { 
-    text = "Ready"
-    textSize = 12f
-    visibility = View.VISIBLE // Change to VISIBLE
-    setPadding(0, 16, 0, 16) 
-}
-
-logText = TextView(this).apply { 
-    text = "Logs will appear here..."
-    textSize = 10f
-    visibility = View.VISIBLE // Change to VISIBLE
-    setTextColor(0xFF888888.toInt()) 
-}
-
-        // ------------------------
-
-        layout.addView(Button(this).apply {
-            text = "1. Start Jarvis"
-            setOnClickListener {
-                ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, ForegroundService::class.java))
-                refresh()
-            }
-        })
-
-        layout.addView(Button(this).apply {
-            text = "2. Enable Accessibility"
-            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        })
-
-        layout.addView(Button(this).apply {
-            text = "3. Grant VPN permission"
-            setOnClickListener {
-                val prep = AndroidVpnService.prepare(this@MainActivity)
-                if (prep != null) startActivityForResult(prep, 100) else refresh()
-            }
-        })
-
-        layout.addView(Button(this).apply {
-            text = "4. Disable battery optimization"
-            setOnClickListener {
-                val pm = getSystemService(POWER_SERVICE) as PowerManager
-                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                    val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                    i.data = Uri.parse("package:$packageName")
-                    try { startActivity(i) } catch (_: Exception) {}
-                }
-            }
-        })
-
-        setContentView(layout)
-        refresh()
+        setContentView(mainContainer)
+        
+        showHomeScreen()
     }
 
-    private fun sendPromptToBrain() {
-        val text = promptInput.text.toString().trim()
-        if (text.isEmpty()) return
+    // --- SCREEN 1: HOME ---
+    private fun showHomeScreen() {
+        mainContainer.removeAllViews()
+        val title = TextView(this).apply { text = "Jarvis AI Builder"; textSize = 24f; setTypeface(null, Typeface.BOLD) }
+        mainContainer.addView(title)
 
-        val json = JSONObject().apply { put("text", "build a custom project: $text"); put("source", "android_app") }
-        val body = RequestBody.create("application/json".toMediaType(), json.toString())
-        val req = Request.Builder().url("http://127.0.0.1:8765/intent").header("X-Jarvis-Token", "change-me-on-first-boot").post(body).build()
+        mainContainer.addView(Button(this).apply {
+            text = "➕ Start New Project"
+            setOnClickListener { showNewProjectScreen() }
+        })
 
-        Toast.makeText(this, "Sending to Brain...", Toast.LENGTH_SHORT).show()
+        mainContainer.addView(Button(this).apply {
+            text = "📁 Project History"
+            setOnClickListener { showHistoryScreen() }
+        })
 
+        mainContainer.addView(Button(this).apply {
+            text = "⚙️ Settings & Permissions"
+            setOnClickListener { showSettingsScreen() }
+        })
+    }
+
+    // --- SCREEN 2: NEW PROJECT ---
+    private fun showNewProjectScreen() {
+        mainContainer.removeAllViews()
+        mainContainer.addView(TextView(this).apply { text = "Problem Statement"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
+        
+        val input = EditText(this).apply { hint = "Describe what you want to build..."; setMinLines(5) }
+        mainContainer.addView(input)
+
+        mainContainer.addView(Button(this).apply {
+            text = "Send to Jarvis"
+            setOnClickListener {
+                val text = input.text.toString().trim()
+                if (text.isNotEmpty()) sendPromptToBrain(text)
+            }
+        })
+
+        mainContainer.addView(Button(this).apply {
+            text = "⬅ Back"
+            setOnClickListener { showHomeScreen() }
+        })
+    }
+
+    // --- SCREEN 3: HISTORY ---
+    private fun showHistoryScreen() {
+        mainContainer.removeAllViews()
+        mainContainer.addView(TextView(this).apply { text = "Project History"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
+        
+        val scroll = ScrollView(this)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(list)
+        mainContainer.addView(scroll)
+
+        val req = Request.Builder().url("http://127.0.0.1:8765/api/projects").build()
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { Toast.makeText(this@MainActivity, "Error: Brain offline.", Toast.LENGTH_LONG).show() }
+                runOnUiThread { list.addView(TextView(this@MainActivity).apply { text = "Error loading history. Is brain running?" }) }
             }
             override fun onResponse(call: Call, response: Response) {
-                val respBody = response.body?.string()
+                val body = response.body?.string()
                 runOnUiThread {
                     try {
-                        val o = JSONObject(respBody ?: "{}")
-                        Toast.makeText(this@MainActivity, o.optString("text", "Sent!"), Toast.LENGTH_LONG).show()
-                        promptInput.setText("")
-                        if (o.optString("intent") == "build_custom_project") {
-                            startPollingProgress()
+                        val o = JSONObject(body ?: "{}")
+                        val keys = o.keys()
+                        while (keys.hasNext()) {
+                            val id = keys.next()
+                            val proj = o.getJSONObject(id)
+                            val step = proj.optString("step_name", "Unknown")
+                            val progress = proj.optInt("progress", 0)
+                            
+                            list.addView(Button(this@MainActivity).apply {
+                                text = "$id\nStatus: $step ($progress%)"
+                                setOnClickListener { showStatusScreen(id) }
+                            })
                         }
                     } catch (_: Exception) {}
                 }
             }
         })
+
+        mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
     }
 
-    // --- NEW POLLING LOGIC ---
-    private fun startPollingProgress() {
-        if (isPolling) return
+    // --- SCREEN 4: STATUS ---
+    private fun showStatusScreen(projectId: String) {
+        currentProjectId = projectId
+        mainContainer.removeAllViews()
+        
+        mainContainer.addView(TextView(this).apply { text = "Project: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
+
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100; visibility = View.VISIBLE
+        }
+        mainContainer.addView(progressBar)
+
+        val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16) }
+        mainContainer.addView(progressText)
+
+        val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY) }
+        mainContainer.addView(logText)
+
+        mainContainer.addView(Button(this).apply { text = "⬅ Back to History"; setOnClickListener { isPolling = false; showHistoryScreen() } })
+
         isPolling = true
-        progressBar.visibility = View.VISIBLE
-        progressText.visibility = View.VISIBLE
-        logText.visibility = View.VISIBLE
-        pollBuildStatus()
+        pollProjectStatus(projectId, progressBar, progressText, logText)
     }
 
-    private fun pollBuildStatus() {
-        if (!isPolling) return
-        val req = Request.Builder().url("http://127.0.0.1:8765/build_status").build()
+    private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView) {
+        if (!isPolling || currentProjectId != id) return
+        val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
         
         http.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {}
@@ -170,42 +168,78 @@ logText = TextView(this).apply {
                         val active = o.optBoolean("active", false)
                         val progress = o.optInt("progress", 0)
                         val step = o.optString("step_name", "")
-                        val eta = o.optInt("eta_seconds", 0)
                         
                         runOnUiThread {
-                            progressBar.progress = progress
-                            progressText.text = "Progress: $progress%\nStep: $step\nETA: ${eta / 60} min"
+                            pb.progress = progress
+                            pt.text = "Progress: $progress%\nStep: $step"
                             
                             val logsArray = o.optJSONArray("logs")
                             if (logsArray != null) {
                                 val sb = StringBuilder()
                                 for (i in 0 until logsArray.length()) { sb.append(logsArray.getString(i)).append("\n") }
-                                logText.text = sb.toString()
+                                lt.text = sb.toString()
                             }
-                            
-                            if (!active && progress == 100) {
-                                progressText.text = "Build Complete!\nCheck GitHub."
-                                isPolling = false
-                            }
+                            if (!active && progress == 100) pt.text = "Build Complete! Check GitHub."
                         }
                     } catch (_: Exception) {}
                 }
             }
         })
-        
-        if (isPolling) handler.postDelayed({ pollBuildStatus() }, 2000) // Poll every 2 seconds
+        if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt) }, 2000)
     }
 
-    override fun onResume() { super.onResume(); refresh() }
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 100) refresh()
+    // --- HELPERS & SETTINGS ---
+    private fun showSettingsScreen() {
+        mainContainer.removeAllViews()
+        mainContainer.addView(TextView(this).apply { text = "Settings"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
+
+        mainContainer.addView(Button(this).apply {
+            text = "1. Start Background Service"
+            setOnClickListener { ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, ForegroundService::class.java)); Toast.makeText(this@MainActivity, "Started", Toast.LENGTH_SHORT).show() }
+        })
+        mainContainer.addView(Button(this).apply {
+            text = "2. Enable Accessibility"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        })
+        mainContainer.addView(Button(this).apply {
+            text = "3. Grant VPN permission"
+            setOnClickListener {
+                val prep = AndroidVpnService.prepare(this@MainActivity)
+                if (prep != null) startActivityForResult(prep, 100)
+            }
+        })
+        mainContainer.addView(Button(this).apply {
+            text = "4. Disable battery optimization"
+            setOnClickListener {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    i.data = Uri.parse("package:$packageName")
+                    try { startActivity(i) } catch (_: Exception) {}
+                }
+            }
+        })
+        mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
     }
 
-    private fun refresh() {
-        val svcOn = com.technicalbase.jarvis.service.AccessibilityService.instance != null
-        val server = com.technicalbase.jarvis.bridge.LocalServer.isRunning()
-        status.text = "Jarvis v0.1.0\nBridge: ${if (server) "UP" else "DOWN"}\nAccessibility: ${if (svcOn) "ON" else "OFF"}"
+    private fun sendPromptToBrain(text: String) {
+        val json = JSONObject().apply { put("text", "build a custom project: $text"); put("source", "android_app") }
+        val body = RequestBody.create("application/json".toMediaType(), json.toString())
+        val req = Request.Builder().url("http://127.0.0.1:8765/intent").header("X-Jarvis-Token", "change-me-on-first-boot").post(body).build()
+
+        Toast.makeText(this, "Sending...", Toast.LENGTH_SHORT).show()
+
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { Toast.makeText(this@MainActivity, "Error: Brain offline.", Toast.LENGTH_LONG).show() }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Build started! Go to History to track.", Toast.LENGTH_LONG).show()
+                    showHomeScreen()
+                }
+            }
+        })
     }
 
     private fun requestPermissions() {
