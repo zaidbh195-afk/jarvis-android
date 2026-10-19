@@ -12,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.io.IOException // <--- THIS WAS MISSING
 
 class ForegroundService : Service() {
     private var wakeWord: WakeWord? = null
@@ -39,7 +40,7 @@ class ForegroundService : Service() {
         if (!LocalServer.isRunning()) LocalServer.start(applicationContext, 8766, "change-me-on-first-boot")
         if (!isProcessing) wakeWord?.start()
         
-        // Start monitoring screen text every 3 seconds
+        // Start monitoring screen text
         startScreenMonitor()
         
         return START_STICKY
@@ -50,7 +51,7 @@ class ForegroundService : Service() {
             while (true) {
                 Thread.sleep(3000)
                 try {
-                    val svc = AccessibilityService.instance ?: continue
+                    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance ?: continue
                     val currentText = svc.readScreenText()
                     
                     if (currentText.isNotEmpty() && currentText != lastScreenText) {
@@ -72,15 +73,8 @@ class ForegroundService : Service() {
             override fun onResponse(call: Call, response: Response) {
                 val resp = response.body?.string() ?: ""
                 if (resp.contains("lockdown_triggered")) {
-                    // The Python brain found a keyword and triggered the lockdown!
                     handler.post {
                         tts?.speak("Keyword detected. Internet locked for 30 minutes.")
-                        // Kill all browsers (optional, if you want to force close them)
-                        val svc = AccessibilityService.instance
-                        if (svc != null) {
-                            // You can loop through installed browsers and force-stop them here
-                            // But the VPN will already block the internet.
-                        }
                     }
                 }
             }
