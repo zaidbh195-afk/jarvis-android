@@ -2,6 +2,8 @@ package com.technicalbase.jarvis.service
 
 import android.app.*
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.*
 import androidx.core.app.NotificationCompat
 import com.technicalbase.jarvis.bridge.LocalServer
@@ -16,6 +18,7 @@ class ForegroundService : Service() {
     private var wakeWord: WakeWord? = null
     private var recorder: AudioRecorder? = null
     private var tts: TtsPlayer? = null
+    private var toneGen: ToneGenerator? = null
     private val http = OkHttpClient()
     private var isProcessing = false
     private var lastScreenText = ""
@@ -30,16 +33,22 @@ class ForegroundService : Service() {
         recorder = AudioRecorder(this)
         tts = TtsPlayer(this)
         wakeWord = WakeWord(this) { onWakeWord() }
+        toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(1001, buildNotification())
+        startForeground(1001, buildNotification("Listening for wake word..."))
         if (intent?.action == "STOP") { stopSelf(); return START_NOT_STICKY }
         if (!LocalServer.isRunning()) LocalServer.start(applicationContext, 8766, "change-me-on-first-boot")
         if (!isProcessing) wakeWord?.start()
         
         startScreenMonitor()
         return START_STICKY
+    }
+
+    private fun updateNotif(text: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(1001, buildNotification(text))
     }
 
     private fun startScreenMonitor() {
@@ -69,7 +78,10 @@ class ForegroundService : Service() {
             override fun onResponse(call: Call, response: Response) {
                 val resp = response.body?.string() ?: ""
                 if (resp.contains("lockdown_triggered")) {
-                    handler.post { tts?.speak("Keyword detected. Internet locked for 30 minutes.") }
+                    handler.post { 
+                        tts?.speak("Keyword detected. Internet locked.")
+                        updateNotif("Lockdown Active!")
+                    }
                 }
             }
         })
@@ -78,25 +90,39 @@ class ForegroundService : Service() {
     private fun onWakeWord() {
         if (isProcessing) return
         isProcessing = true
-        wakeWord?.stop()
+        
+        handler.post {
+            toneGen?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            updateNotif("Listening to you...")
+            wakeWord?.stop()
+        }
         
         Handler(Looper.getMainLooper()).postDelayed({
             Executors.newSingleThreadExecutor().execute {
                 try {
-                    val wav = recorder?.record(5)
+                    val wav = recorder?.record(8)
                     if (wav != null && wav.length() > 1000) {
+                        handler.post { updateNotif("Thinking...") }
                         val reply = sendToBrain(wav)
-                        if (reply.isNotEmpty()) Handler(Looper.getMainLooper()).post { tts?.speak(reply) }
+                        
+                        if (reply.isNotEmpty()) {
+                            handler.post { 
+                                toneGen?.startTone(ToneGenerator.TONE_PROP_BEEP2, 150)
+                                updateNotif("Speaking...")
+                                tts?.speak(reply) 
+                            }
+                        }
                         wav.delete()
                     }
                 } catch (e: Exception) {} finally {
                     Handler(Looper.getMainLooper()).postDelayed({
                         isProcessing = false
+                        handler.post { updateNotif("Listening for wake word...") }
                         wakeWord?.start()
-                    }, 2000)
+                    }, 3000) // Wait for TTS to finish
                 }
             }
-        }, 300)
+        }, 500) // Wait for mic release
     }
 
     private fun sendToBrain(wav: java.io.File): String {
@@ -113,14 +139,18 @@ class ForegroundService : Service() {
     override fun onDestroy() { 
         wakeWord?.stop()
         tts?.shutdown()
+        toneGen?.release()
         LocalServer.stop()
         screenMonitor.shutdownNow()
         super.onDestroy() 
     }
 
-    private fun buildNotification(): Notification = NotificationCompat.Builder(this, "jarvis")
-        .setContentTitle("Jarvis is running").setContentText("Monitoring screen & listening...")
-        .setSmallIcon(android.R.drawable.presence_online).setOngoing(true).build()
+    private fun buildNotification(text: String): Notification = NotificationCompat.Builder(this, "jarvis")
+        .setContentTitle("Jarvis AI")
+        .setContentText(text)
+        .setSmallIcon(android.R.drawable.presence_online)
+        .setOngoing(true)
+        .build()
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
