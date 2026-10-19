@@ -6,7 +6,6 @@ import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.technicalbase.jarvis.bridge.LocalServer
-import com.technicalbase.jarvis.core.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
