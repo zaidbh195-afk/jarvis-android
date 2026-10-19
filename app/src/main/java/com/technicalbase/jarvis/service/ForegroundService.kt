@@ -3,7 +3,6 @@ package com.technicalbase.jarvis.service
 import android.app.*
 import android.content.Intent
 import android.os.*
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.technicalbase.jarvis.bridge.LocalServer
 import okhttp3.*
@@ -11,7 +10,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 import java.util.concurrent.Executors
-import java.io.IOException // <--- THIS WAS MISSING
+import java.io.IOException
 
 class ForegroundService : Service() {
     private var wakeWord: WakeWord? = null
@@ -39,9 +38,7 @@ class ForegroundService : Service() {
         if (!LocalServer.isRunning()) LocalServer.start(applicationContext, 8766, "change-me-on-first-boot")
         if (!isProcessing) wakeWord?.start()
         
-        // Start monitoring screen text
         startScreenMonitor()
-        
         return START_STICKY
     }
 
@@ -50,7 +47,7 @@ class ForegroundService : Service() {
             while (true) {
                 Thread.sleep(3000)
                 try {
-                    val svc = com.technicalbase.jarvis.service.AccessibilityService.instance ?: continue
+                    val svc = AccessibilityService.instance ?: continue
                     val currentText = svc.readScreenText()
                     
                     if (currentText.isNotEmpty() && currentText != lastScreenText) {
@@ -72,9 +69,7 @@ class ForegroundService : Service() {
             override fun onResponse(call: Call, response: Response) {
                 val resp = response.body?.string() ?: ""
                 if (resp.contains("lockdown_triggered")) {
-                    handler.post {
-                        tts?.speak("Keyword detected. Internet locked for 30 minutes.")
-                    }
+                    handler.post { tts?.speak("Keyword detected. Internet locked for 30 minutes.") }
                 }
             }
         })
