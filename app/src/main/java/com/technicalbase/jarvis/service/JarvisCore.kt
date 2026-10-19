@@ -6,6 +6,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -18,47 +20,67 @@ import java.util.Locale
 class WakeWord(private val context: Context, private val onWakeWord: () -> Unit) {
     private var recognizer: SpeechRecognizer? = null
     private var isListening = false
+    private val handler = Handler(Looper.getMainLooper())
 
     fun start() {
         if (isListening) return
         isListening = true
-        recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-        }
+        
+        handler.post {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
 
-        recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onError(error: Int) {
-                if (isListening) {
-                    // Auto-restart on silence or timeout
-                    Thread.sleep(300)
-                    start() 
+            recognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                
+                override fun onError(error: Int) {
+                    // Infinite restart loop when it stops listening
+                    if (isListening) {
+                        restartAfterDelay()
+                    }
                 }
-            }
-            override fun onResults(results: Bundle?) {
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val text = matches?.joinToString(" ")?.lowercase() ?: ""
-                if (text.contains("jarvis")) {
-                    onWakeWord()
-                    isListening = false
-                } else {
-                    if (isListening) start()
+                
+                override fun onResults(results: Bundle?) {
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = matches?.joinToString(" ")?.lowercase() ?: ""
+                    if (text.contains("jarvis")) {
+                        onWakeWord()
+                        isListening = false
+                    } else {
+                        if (isListening) restartAfterDelay()
+                    }
                 }
+                
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+            recognizer?.startListening(intent)
+        }
+    }
+    
+    private fun restartAfterDelay() {
+        handler.removeCallbacksAndMessages(null)
+        handler.postDelayed({
+            if (isListening) {
+                recognizer?.cancel()
+                recognizer?.destroy()
+                recognizer = null
+                start()
             }
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        recognizer?.startListening(intent)
+        }, 500) // 0.5 second delay to prevent battery drain
     }
 
     fun stop() {
         isListening = false
+        handler.removeCallbacksAndMessages(null)
         recognizer?.stopListening()
         recognizer?.destroy()
         recognizer = null
@@ -98,7 +120,6 @@ class AudioRecorder(private val context: Context) {
                         hasSpoken = true
                         lastSpeechTime = now
                     } else if (hasSpoken && (now - lastSpeechTime > 1500)) {
-                        // 1.5 seconds of silence detected after speaking
                         break 
                     }
                 }
