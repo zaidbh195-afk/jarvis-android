@@ -1,42 +1,63 @@
 package com.technicalbase.jarvis.service
 
 import android.content.Context
+import android.content.Intent
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import com.rementia.openwakeword.lib.DetectionMode
-import com.rementia.openwakeword.lib.WakeWordEngine
-import com.rementia.openwakeword.lib.WakeWordModel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 
 class WakeWord(private val context: Context, private val onWakeWord: () -> Unit) {
-    private var engine: WakeWordEngine? = null
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private var recognizer: SpeechRecognizer? = null
+    private var isListening = false
 
     fun start() {
-        if (engine != null) return
-        try {
-            val models = listOf(WakeWordModel("Jarvis", "jarvis.onnx", threshold = 0.5f))
-            engine = WakeWordEngine(context, models, DetectionMode.SINGLE_BEST)
-            engine?.start()
-            scope.launch {
-                engine?.detections?.collect { 
-                    Log.i("Jarvis.Wake", "Detected!")
-                    onWakeWord() 
+        if (isListening) return
+        isListening = true
+        recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        }
+
+        recognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {
+                if (isListening) start()
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val text = matches?.joinToString(" ")?.lowercase() ?: ""
+                if (text.contains("jarvis")) {
+                    onWakeWord()
+                    isListening = false
+                } else {
+                    if (isListening) start()
                 }
             }
-        } catch (e: Exception) { Log.e("Jarvis.Wake", "Failed: ${e.message}") }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        recognizer?.startListening(intent)
     }
-    fun stop() { 
-        try { engine?.release() } catch (_: Exception) {}
-        engine = null 
+
+    fun stop() {
+        isListening = false
+        recognizer?.stopListening()
+        recognizer?.destroy()
+        recognizer = null
     }
 }
 
