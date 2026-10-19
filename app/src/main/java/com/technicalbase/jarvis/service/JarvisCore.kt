@@ -35,7 +35,11 @@ class WakeWord(private val context: Context, private val onWakeWord: () -> Unit)
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
-                if (isListening) start()
+                if (isListening) {
+                    // Auto-restart on silence or timeout
+                    Thread.sleep(300)
+                    start() 
+                }
             }
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -62,7 +66,7 @@ class WakeWord(private val context: Context, private val onWakeWord: () -> Unit)
 }
 
 class AudioRecorder(private val context: Context) {
-    fun record(maxSeconds: Int = 5): File? {
+    fun record(maxSeconds: Int = 8): File? {
         val minBuf = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
         
@@ -75,20 +79,28 @@ class AudioRecorder(private val context: Context) {
             recorder.startRecording()
             val buf = ByteArray(minBuf)
             var totalBytes = 0
-            var silentFrames = 0
             var hasSpoken = false
+            var lastSpeechTime = System.currentTimeMillis()
             
             while (totalBytes < 16000 * 2 * maxSeconds) {
                 val n = recorder.read(buf, 0, buf.size)
                 if (n > 0) {
                     out.write(buf, 0, n)
                     totalBytes += n
+                    
                     var maxAmp = 0
                     for (i in 0 until n step 2) { 
                         val amp = Math.abs(buf[i].toInt()); if (amp > maxAmp) maxAmp = amp 
                     }
-                    if (maxAmp > 2000) { hasSpoken = true; silentFrames = 0 }
-                    else if (hasSpoken) { silentFrames++; if (silentFrames > minBuf / 4) break }
+                    
+                    val now = System.currentTimeMillis()
+                    if (maxAmp > 2000) { 
+                        hasSpoken = true
+                        lastSpeechTime = now
+                    } else if (hasSpoken && (now - lastSpeechTime > 1500)) {
+                        // 1.5 seconds of silence detected after speaking
+                        break 
+                    }
                 }
             }
             recorder.stop(); out.close()
