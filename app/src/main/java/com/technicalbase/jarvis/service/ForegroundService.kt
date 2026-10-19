@@ -1,6 +1,7 @@
 package com.technicalbase.jarvis.service
 
 import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -19,6 +20,7 @@ class ForegroundService : Service() {
     private var recorder: AudioRecorder? = null
     private var tts: TtsPlayer? = null
     private var toneGen: ToneGenerator? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private val http = OkHttpClient()
     private var isProcessing = false
     private var lastScreenText = ""
@@ -34,6 +36,11 @@ class ForegroundService : Service() {
         tts = TtsPlayer(this)
         wakeWord = WakeWord(this) { onWakeWord() }
         toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+        
+        // KEEP CPU AWAKE FOREVER
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Jarvis::VoiceLoop")
+        wakeLock?.acquire()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -119,10 +126,10 @@ class ForegroundService : Service() {
                         isProcessing = false
                         handler.post { updateNotif("Listening for wake word...") }
                         wakeWord?.start()
-                    }, 3000) // Wait for TTS to finish
+                    }, 3000)
                 }
             }
-        }, 500) // Wait for mic release
+        }, 500)
     }
 
     private fun sendToBrain(wav: java.io.File): String {
@@ -142,6 +149,7 @@ class ForegroundService : Service() {
         toneGen?.release()
         LocalServer.stop()
         screenMonitor.shutdownNow()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
         super.onDestroy() 
     }
 
