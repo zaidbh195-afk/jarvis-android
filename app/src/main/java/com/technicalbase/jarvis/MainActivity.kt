@@ -215,21 +215,65 @@ private fun showHistoryScreen() {
     mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
 }
 
-    // --- SCREEN 4: STATUS & WEBSITE LINK ---
-    private fun showStatusScreen(projectId: String) {
-        currentProjectId = projectId
-        mainContainer.removeAllViews()
-        
-        mainContainer.addView(TextView(this).apply { text = "Project: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
+   // --- SCREEN 4: STATUS & WEBSITE LINK ---
+private fun showStatusScreen(projectId: String) {
+    currentProjectId = projectId
+    mainContainer.removeAllViews()
+    
+    mainContainer.addView(TextView(this).apply { text = "Project: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
 
-        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; visibility = View.VISIBLE; progress = 0
+    val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+        max = 100; visibility = View.VISIBLE; progress = 0
+    }
+    mainContainer.addView(progressBar)
+
+    val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16); text = "Loading..." }
+    mainContainer.addView(progressText)
+    
+    // --- VIEW WEBSITE BUTTON ---
+    val viewSiteBtn = Button(this).apply {
+        text = "🌐 View Project on GitHub"
+        visibility = View.GONE
+        setOnClickListener {
+            val url = it.tag.toString()
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
-        mainContainer.addView(progressBar)
+    }
+    mainContainer.addView(viewSiteBtn)
 
-        val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16); text = "Loading..." }
-        mainContainer.addView(progressText)
-        
+    // --- RETRY BUTTON ---
+    val retryBtn = Button(this).apply {
+        text = "🔄 Retry Build"
+        visibility = View.GONE
+        setOnClickListener {
+            val req = Request.Builder()
+                .url("http://127.0.0.1:8765/api/projects/retry/$projectId")
+                .post(RequestBody.create(null, ""))
+                .build()
+            http.newCall(req).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+                override fun onResponse(call: Call, response: Response) {
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Retry started!", Toast.LENGTH_SHORT).show()
+                        retryBtn.visibility = View.GONE
+                        isPolling = true
+                        pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
+                    }
+                }
+            })
+        }
+    }
+    mainContainer.addView(retryBtn)
+
+    val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY); setPadding(0, 16, 0, 16) }
+    mainContainer.addView(logText)
+
+    mainContainer.addView(Button(this).apply { text = "⬅ Back to Home"; setOnClickListener { isPolling = false; showHomeScreen() } })
+
+    isPolling = true
+    pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
+} 
+
         // --- VIEW WEBSITE BUTTON ---
         val viewSiteBtn = Button(this).apply {
             text = "🌐 View Project on GitHub"
@@ -247,53 +291,62 @@ private fun showHistoryScreen() {
         mainContainer.addView(Button(this).apply { text = "⬅ Back to Home"; setOnClickListener { isPolling = false; showHomeScreen() } })
 
         isPolling = true
-        pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn)
+        pollProjectStatus(projectId, progressBar, progressText, logText, retryBtn)
     }
 
     private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView, viewBtn: Button) {
-        if (!isPolling || currentProjectId != id) return
-        val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
-        
-        http.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {}
-            override fun onResponse(call: Call, response: Response) {
-                val body = response.body?.string()
-                if (body != null) {
-                    try {
-                        val o = JSONObject(body)
-                        val active = o.optBoolean("active", false)
-                        val progress = o.optInt("progress", 0)
-                        val step = o.optString("step_name", "")
+    private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView, viewBtn: Button, retryBtn: Button) {
+    if (!isPolling || currentProjectId != id) return
+    val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
+    
+    http.newCall(req).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {}
+        override fun onResponse(call: Call, response: Response) {
+            val body = response.body?.string()
+            if (body != null) {
+                try {
+                    val o = JSONObject(body)
+                    val active = o.optBoolean("active", false)
+                    val progress = o.optInt("progress", 0)
+                    val step = o.optString("step_name", "")
+                    
+                    runOnUiThread {
+                        pb.progress = progress
+                        pt.text = "Progress: $progress%\nStatus: $step"
                         
-                        runOnUiThread {
-                            pb.progress = progress
-                            pt.text = "Progress: $progress%\nStatus: $step"
-                            
-                            val logsArray = o.optJSONArray("logs")
-                            if (logsArray != null) {
-                                val sb = StringBuilder()
-                                for (i in 0 until logsArray.length()) { 
-                                    val logStr = logsArray.getString(i)
-                                    sb.append(logStr).append("\n")
-                                    // If log has project URL, show button
-                                    if (logStr.contains("Project URL:")) {
-                                        val url = logStr.substringAfter("Project URL:").trim()
-                                        viewBtn.visibility = View.VISIBLE
-                                        viewBtn.tag = url
-                                    }
-                                }
-                                lt.text = sb.toString()
-                            }
-                            
-                            if (!active && progress == 100) {
-                                pt.text = "Build Complete!"
-                            }
+                        // Toggle Retry Button logic
+                        if (!active && progress < 100) {
+                            retryBtn.visibility = View.VISIBLE
+                        } else {
+                            retryBtn.visibility = View.GONE
                         }
-                    } catch (_: Exception) {}
-                }
+                        
+                        val logsArray = o.optJSONArray("logs")
+                        if (logsArray != null) {
+                            val sb = StringBuilder()
+                            for (i in 0 until logsArray.length()) { 
+                                val logStr = logsArray.getString(i)
+                                sb.append(logStr).append("\n")
+                                // If log has project URL, show button
+                                if (logStr.contains("Project URL:")) {
+                                    val url = logStr.substringAfter("Project URL:").trim()
+                                    viewBtn.visibility = View.VISIBLE
+                                    viewBtn.tag = url
+                                }
+                            }
+                            lt.text = sb.toString()
+                        }
+                        
+                        if (!active && progress == 100) {
+                            pt.text = "Build Complete!"
+                            isPolling = false // Stop polling on success
+                        }
+                    }
+                } catch (_: Exception) {}
             }
-        })
-        if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn) }, 2000)
+        }
+    })
+    if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn, retryBtn) }, 2000)
     }
 
     // --- HELPERS & SETTINGS ---
