@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
         showHomeScreen()
     }
 
+    // --- SCREEN 1: HOME ---
     private fun showHomeScreen() {
         mainContainer.removeAllViews()
         val title = TextView(this).apply { text = "Jarvis AI Builder"; textSize = 24f; setTypeface(null, Typeface.BOLD) }
@@ -110,6 +111,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // --- SCREEN 2: NEW PROJECT ---
     private fun showNewProjectScreen() {
         mainContainer.removeAllViews()
         mainContainer.addView(TextView(this).apply { text = "Problem Statement"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
@@ -131,6 +133,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // --- SCREEN 3: HISTORY ---
     private fun showHistoryScreen() {
         mainContainer.removeAllViews()
         
@@ -206,62 +209,63 @@ class MainActivity : AppCompatActivity() {
         mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
     }
 
+    // --- SCREEN 4: STATUS & WEBSITE LINK ---
     private fun showStatusScreen(projectId: String) {
         currentProjectId = projectId
         mainContainer.removeAllViews()
         
         mainContainer.addView(TextView(this).apply { text = "Project: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
 
+        // 1. DECLARE ALL UI ELEMENTS FIRST
         val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; visibility = View.VISIBLE; progress = 0
         }
-        mainContainer.addView(progressBar)
-
         val progressText = TextView(this).apply { textSize = 14f; setPadding(0, 16, 0, 16); text = "Loading..." }
-        mainContainer.addView(progressText)
-        
-        val viewSiteBtn = Button(this).apply {
-            text = "🌐 View Project on GitHub"
-            visibility = View.GONE
-            setOnClickListener {
-                val url = it.tag.toString()
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            }
-        }
-        mainContainer.addView(viewSiteBtn)
-
-        val retryBtn = Button(this).apply {
-            text = "🔄 Retry Build"
-            visibility = View.GONE
-            setOnClickListener {
-                val req = Request.Builder()
-                    .url("http://127.0.0.1:8765/api/projects/retry/$projectId")
-                    .post(RequestBody.create(null, ""))
-                    .build()
-                http.newCall(req).enqueue(object : Callback {
-                    override fun onFailure(call: Call, e: IOException) {}
-                    override fun onResponse(call: Call, response: Response) {
-                        runOnUiThread {
-                            Toast.makeText(this@MainActivity, "Retry started!", Toast.LENGTH_SHORT).show()
-                            retryBtn.visibility = View.GONE
-                            isPolling = true
-                            pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
-                        }
-                    }
-                })
-            }
-        }
-        mainContainer.addView(retryBtn)
-
+        val viewSiteBtn = Button(this).apply { text = "🌐 View Project on GitHub"; visibility = View.GONE }
+        val retryBtn = Button(this).apply { text = "🔄 Retry Build"; visibility = View.GONE }
         val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY); setPadding(0, 16, 0, 16) }
+        val backBtn = Button(this).apply { text = "⬅ Back to Home" }
+
+        // 2. ADD THEM TO SCREEN
+        mainContainer.addView(progressBar)
+        mainContainer.addView(progressText)
+        mainContainer.addView(viewSiteBtn)
+        mainContainer.addView(retryBtn)
         mainContainer.addView(logText)
+        mainContainer.addView(backBtn)
 
-        mainContainer.addView(Button(this).apply { text = "⬅ Back to Home"; setOnClickListener { isPolling = false; showHomeScreen() } })
+        // 3. SET LISTENERS (Now it's safe to reference logText and retryBtn)
+        viewSiteBtn.setOnClickListener {
+            val url = it.tag.toString()
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
 
+        retryBtn.setOnClickListener {
+            val req = Request.Builder()
+                .url("http://127.0.0.1:8765/api/projects/retry/$projectId")
+                .post(RequestBody.create(null, ""))
+                .build()
+            http.newCall(req).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+                override fun onResponse(call: Call, response: Response) {
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Retry started!", Toast.LENGTH_SHORT).show()
+                        retryBtn.visibility = View.GONE
+                        isPolling = true
+                        pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
+                    }
+                }
+            })
+        }
+
+        backBtn.setOnClickListener { isPolling = false; showHomeScreen() }
+
+        // 4. START POLLING
         isPolling = true
         pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
     }
 
+    // --- POLLING FUNCTION ---
     private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView, viewBtn: Button, retryBtn: Button) {
         if (!isPolling || currentProjectId != id) return
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
@@ -314,6 +318,7 @@ class MainActivity : AppCompatActivity() {
         if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn, retryBtn) }, 2000)
     }
 
+    // --- HELPERS & SETTINGS ---
     private fun showSettingsScreen() {
         mainContainer.removeAllViews()
         mainContainer.addView(TextView(this).apply { text = "Settings"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
