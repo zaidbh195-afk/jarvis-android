@@ -219,8 +219,36 @@ class MainActivity : AppCompatActivity() {
         
         val viewSiteBtn = Button(this).apply { text = "🌐 View Project on GitHub"; visibility = View.GONE }
         val retryBtn = Button(this).apply { text = "🔄 Retry Build"; visibility = View.GONE }
-        val diagBtn = Button(this).apply { text = "🩺 View Diagnostics (Errors & AI Fixes)" }
+        val diagBtn = Button(this).apply { text = "🩺 View Diagnostics" }
         
+        // SUGGESTION UI
+        val suggestInput = EditText(this).apply { hint = "Add a new feature or fix (e.g., Add dark mode)"; setMinLines(2) }
+        val suggestBtn = Button(this).apply { 
+            text = "✨ Apply Suggestion"
+            setOnClickListener {
+                val suggestion = suggestInput.text.toString().trim()
+                if (suggestion.isNotEmpty()) {
+                    val json = JSONObject().apply { put("suggestion", suggestion) }
+                    val body = RequestBody.create("application/json".toMediaType(), json.toString())
+                    val req = Request.Builder()
+                        .url("http://127.0.0.1:8765/api/projects/improve/$projectId")
+                        .post(body)
+                        .build()
+                    http.newCall(req).enqueue(object : Callback {
+                        override fun onFailure(call: Call, e: IOException) {}
+                        override fun onResponse(call: Call, response: Response) {
+                            runOnUiThread {
+                                Toast.makeText(this@MainActivity, "Improvement started!", Toast.LENGTH_SHORT).show()
+                                suggestInput.setText("")
+                                isPolling = true
+                                pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
+                            }
+                        }
+                    })
+                }
+            }
+        }
+
         val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY); setPadding(0, 16, 0, 16) }
         val backBtn = Button(this).apply { text = "⬅ Back to Home" }
 
@@ -229,6 +257,8 @@ class MainActivity : AppCompatActivity() {
         mainContainer.addView(viewSiteBtn)
         mainContainer.addView(retryBtn)
         mainContainer.addView(diagBtn)
+        mainContainer.addView(suggestInput)
+        mainContainer.addView(suggestBtn)
         mainContainer.addView(logText)
         mainContainer.addView(backBtn)
 
@@ -262,7 +292,6 @@ class MainActivity : AppCompatActivity() {
         pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
     }
     
-    // --- NEW SCREEN: DIAGNOSTICS ---
     private fun showDiagnosticsScreen(projectId: String) {
         mainContainer.removeAllViews()
         mainContainer.addView(TextView(this).apply { text = "Diagnostics: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD); setPadding(0,0,0,24) })
@@ -299,9 +328,9 @@ class MainActivity : AppCompatActivity() {
                                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0,0,0,24) }
                                 }
                                 
-                                var colorHex = "#FF9800" // Orange (Attempting)
-                                if (status == "success" || status == "fixed") colorHex = "#4CAF50" // Green
-                                if (status == "failed") colorHex = "#F44336" // Red
+                                var colorHex = "#FF9800"
+                                if (status == "success" || status == "fixed") colorHex = "#4CAF50"
+                                if (status == "failed") colorHex = "#F44336"
                                 
                                 card.addView(TextView(this@MainActivity).apply { text = "⚠️ $issue"; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor(colorHex)); textSize = 16f })
                                 card.addView(TextView(this@MainActivity).apply { text = "Details: $detail"; setPadding(0,8,0,8); textSize = 12f; setTextColor(Color.LTGRAY) })
