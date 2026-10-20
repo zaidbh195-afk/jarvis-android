@@ -212,6 +212,7 @@ class MainActivity : AppCompatActivity() {
         
         mainContainer.addView(TextView(this).apply { text = "Project: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
 
+        // --- 1. DECLARE ALL UI ELEMENTS FIRST ---
         val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; visibility = View.VISIBLE; progress = 0
         }
@@ -221,37 +222,13 @@ class MainActivity : AppCompatActivity() {
         val retryBtn = Button(this).apply { text = "🔄 Retry Build"; visibility = View.GONE }
         val diagBtn = Button(this).apply { text = "🩺 View Diagnostics" }
         
-        // SUGGESTION UI
         val suggestInput = EditText(this).apply { hint = "Add a new feature or fix (e.g., Add dark mode)"; setMinLines(2) }
-        val suggestBtn = Button(this).apply { 
-            text = "✨ Apply Suggestion"
-            setOnClickListener {
-                val suggestion = suggestInput.text.toString().trim()
-                if (suggestion.isNotEmpty()) {
-                    val json = JSONObject().apply { put("suggestion", suggestion) }
-                    val body = RequestBody.create("application/json".toMediaType(), json.toString())
-                    val req = Request.Builder()
-                        .url("http://127.0.0.1:8765/api/projects/improve/$projectId")
-                        .post(body)
-                        .build()
-                    http.newCall(req).enqueue(object : Callback {
-                        override fun onFailure(call: Call, e: IOException) {}
-                        override fun onResponse(call: Call, response: Response) {
-                            runOnUiThread {
-                                Toast.makeText(this@MainActivity, "Improvement started!", Toast.LENGTH_SHORT).show()
-                                suggestInput.setText("")
-                                isPolling = true
-                                pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
-                            }
-                        }
-                    })
-                }
-            }
-        }
-
+        val suggestBtn = Button(this).apply { text = "✨ Apply Suggestion" }
+        
         val logText = TextView(this).apply { textSize = 12f; setTextColor(Color.GRAY); setPadding(0, 16, 0, 16) }
         val backBtn = Button(this).apply { text = "⬅ Back to Home" }
 
+        // --- 2. ADD THEM TO THE SCREEN ---
         mainContainer.addView(progressBar)
         mainContainer.addView(progressText)
         mainContainer.addView(viewSiteBtn)
@@ -262,6 +239,7 @@ class MainActivity : AppCompatActivity() {
         mainContainer.addView(logText)
         mainContainer.addView(backBtn)
 
+        // --- 3. SET LISTENERS (Safe now) ---
         viewSiteBtn.setOnClickListener {
             val url = it.tag.toString()
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -285,9 +263,33 @@ class MainActivity : AppCompatActivity() {
             })
         }
         
+        suggestBtn.setOnClickListener {
+            val suggestion = suggestInput.text.toString().trim()
+            if (suggestion.isNotEmpty()) {
+                val json = JSONObject().apply { put("suggestion", suggestion) }
+                val body = RequestBody.create("application/json".toMediaType(), json.toString())
+                val req = Request.Builder()
+                    .url("http://127.0.0.1:8765/api/projects/improve/$projectId")
+                    .post(body)
+                    .build()
+                http.newCall(req).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {}
+                    override fun onResponse(call: Call, response: Response) {
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "Improvement started!", Toast.LENGTH_SHORT).show()
+                            suggestInput.setText("")
+                            isPolling = true
+                            pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
+                        }
+                    }
+                })
+            }
+        }
+        
         diagBtn.setOnClickListener { showDiagnosticsScreen(projectId) }
         backBtn.setOnClickListener { isPolling = false; showHomeScreen() }
 
+        // --- 4. START POLLING ---
         isPolling = true
         pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
     }
