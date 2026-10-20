@@ -45,7 +45,6 @@ class MainActivity : AppCompatActivity() {
         showHomeScreen()
     }
 
-    // --- SCREEN 1: HOME ---
     private fun showHomeScreen() {
         mainContainer.removeAllViews()
         val title = TextView(this).apply { text = "Jarvis AI Builder"; textSize = 24f; setTypeface(null, Typeface.BOLD) }
@@ -66,7 +65,6 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { showSettingsScreen() }
         })
 
-        // --- RECENT PROCESS STATUS BAR ---
         val recentStatusText = TextView(this).apply { 
             text = "\nRecent Process:\nLoading status..."; 
             textSize = 14f; 
@@ -112,7 +110,6 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // --- SCREEN 2: NEW PROJECT ---
     private fun showNewProjectScreen() {
         mainContainer.removeAllViews()
         mainContainer.addView(TextView(this).apply { text = "Problem Statement"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
@@ -134,7 +131,6 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // --- SCREEN 3: HISTORY ---
     private fun showHistoryScreen() {
         mainContainer.removeAllViews()
         
@@ -210,7 +206,6 @@ class MainActivity : AppCompatActivity() {
         mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
     }
 
-    // --- SCREEN 4: STATUS & WEBSITE LINK ---
     private fun showStatusScreen(projectId: String) {
         currentProjectId = projectId
         mainContainer.removeAllViews()
@@ -267,7 +262,6 @@ class MainActivity : AppCompatActivity() {
         pollProjectStatus(projectId, progressBar, progressText, logText, viewSiteBtn, retryBtn)
     }
 
-    // --- POLLING FUNCTION ---
     private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView, viewBtn: Button, retryBtn: Button) {
         if (!isPolling || currentProjectId != id) return
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
@@ -320,7 +314,6 @@ class MainActivity : AppCompatActivity() {
         if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn, retryBtn) }, 2000)
     }
 
-    // --- HELPERS & SETTINGS ---
     private fun showSettingsScreen() {
         mainContainer.removeAllViews()
         mainContainer.addView(TextView(this).apply { text = "Settings"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
