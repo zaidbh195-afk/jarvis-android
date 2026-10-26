@@ -43,7 +43,6 @@ class AccessibilityService : BaseAS() {
         }
     }
 
-    // --- 1. READING TEXT (For Keyword Lockdown) ---
     private fun collectAllText(node: AccessibilityNodeInfo?): String {
         if (node == null) return ""
         val sb = StringBuilder()
@@ -78,7 +77,7 @@ class AccessibilityService : BaseAS() {
 
     fun currentForeground(): String = lastForegroundPackage
 
-    // --- 2. ACTIONS (Restored for LocalServer.kt) ---
+    // --- RESTORED FUNCTIONS FOR LOCALSERVER.KT ---
     fun typeText(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
