@@ -6,6 +6,9 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import com.technicalbase.jarvis.service.ForegroundService
+import com.technicalbase.jarvis.service.VpnService
+import org.json.JSONObject
+import java.io.File
 
 class BootReceiver : BroadcastReceiver() {
 
@@ -21,7 +24,7 @@ class BootReceiver : BroadcastReceiver() {
 
         Log.i("Jarvis.Boot", "Boot detected — starting Jarvis")
 
-        // Start ForegroundService (starts LocalServer on 8766)
+        // 1. Start ForegroundService (starts LocalServer on 8766)
         try {
             val svc = Intent(ctx, ForegroundService::class.java)
             svc.action = "BOOT_START"
@@ -34,14 +37,19 @@ class BootReceiver : BroadcastReceiver() {
             Log.e("Jarvis.Boot", "Failed to start service: ${e.message}")
         }
 
-        // Restore VpnService if a lockdown was active before reboot
+        // 2. Restore VpnService if a lockdown was active before reboot
         try {
-            val vpn = Intent(ctx, com.technicalbase.jarvis.service.VpnService::class.java)
-            vpn.action = "RESTORE"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ctx.startForegroundService(vpn)
-            } else {
-                ctx.startService(vpn)
+            val stateFile = File(ctx.filesDir, "lockdown.json")
+            if (stateFile.exists()) {
+                val o = JSONObject(stateFile.readText())
+                val deadlineMs = o.optLong("deadline_ms", 0)
+                val kind = o.optString("kind", "manual")
+                
+                // If the timer hasn't expired yet, force the VPN back on
+                if (deadlineMs > System.currentTimeMillis()) {
+                    Log.i("Jarvis.Boot", "Active lockdown found! Restoring VPN...")
+                    VpnService.start(ctx, 30, kind, "Reboot Recovery")
+                }
             }
         } catch (e: Exception) {
             Log.w("Jarvis.Boot", "VPN restore skipped: ${e.message}")
