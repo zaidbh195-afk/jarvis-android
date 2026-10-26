@@ -51,7 +51,7 @@ class ForegroundService : Service() {
         nm.notify(1001, buildNotification(text))
     }
 
-    // --- SINGLE SCREEN MONITOR FUNCTION ---
+    // --- ONLY ONE startScreenMonitor FUNCTION ---
     private fun startScreenMonitor() {
         screenMonitor.execute {
             while (true) {
