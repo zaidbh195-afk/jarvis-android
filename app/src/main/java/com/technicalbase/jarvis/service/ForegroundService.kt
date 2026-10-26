@@ -1,7 +1,6 @@
 package com.technicalbase.jarvis.service
 
 import android.app.*
-import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -20,7 +19,6 @@ class ForegroundService : Service() {
     private var recorder: AudioRecorder? = null
     private var tts: TtsPlayer? = null
     private var toneGen: ToneGenerator? = null
-    private var wakeLock: PowerManager.WakeLock? = null
     private val http = OkHttpClient()
     private var isProcessing = false
     private var lastScreenText = ""
@@ -36,15 +34,10 @@ class ForegroundService : Service() {
         tts = TtsPlayer(this)
         wakeWord = WakeWord(this) { onWakeWord() }
         toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
-        
-        // KEEP CPU AWAKE FOREVER
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Jarvis::VoiceLoop")
-        wakeLock?.acquire()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(1001, buildNotification("Listening for wake word..."))
+        startForeground(1001, buildNotification("Monitoring screen..."))
         if (intent?.action == "STOP") { stopSelf(); return START_NOT_STICKY }
         if (!LocalServer.isRunning()) LocalServer.start(applicationContext, 8766, "change-me-on-first-boot")
         if (!isProcessing) wakeWord?.start()
@@ -58,65 +51,45 @@ class ForegroundService : Service() {
         nm.notify(1001, buildNotification(text))
     }
 
+    // --- SINGLE SCREEN MONITOR FUNCTION ---
     private fun startScreenMonitor() {
         screenMonitor.execute {
             while (true) {
-                Thread.sleep(3000)
+                Thread.sleep(2000)
                 try {
                     val svc = AccessibilityService.instance ?: continue
-                    val currentText = svc.readScreenText()
+                    val screenText = svc.readScreenText()
+                    val focusedText = svc.readFocusedText()
+                    val combinedText = "$screenText\n$focusedText".trim()
                     
-                    if (currentText.isNotEmpty() && currentText != lastScreenText) {
-                        lastScreenText = currentText
-                        sendScreenTextToBrain(currentText)
+                    if (combinedText.isNotEmpty() && combinedText != lastScreenText) {
+                        lastScreenText = combinedText
+                        sendScreenTextToBrain(combinedText)
                     }
-                } catch (e: Exception) {}
-            }
-        }
-    }
-
-    private fun startScreenMonitor() {
-    screenMonitor.execute {
-        while (true) {
-            Thread.sleep(2000) // Check every 2 seconds
-            try {
-                val svc = AccessibilityService.instance ?: continue
-                
-                // Capture BOTH the full screen text AND the text being typed
-                val screenText = svc.readScreenText()
-                val focusedText = svc.readFocusedText()
-                
-                // Combine them to ensure we catch search bars in YouTube/Chrome
-                val combinedText = "$screenText\n$focusedText".trim()
-                
-                if (combinedText.isNotEmpty() && combinedText != lastScreenText) {
-                    lastScreenText = combinedText
-                    sendScreenTextToBrain(combinedText)
+                } catch (e: Exception) {
+                    android.util.Log.e("JarvisMonitor", "Screen read error: ${e.message}")
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("JarvisMonitor", "Screen read error: ${e.message}")
             }
         }
     }
-}
 
-private fun sendScreenTextToBrain(text: String) {
-    val json = JSONObject().apply { put("text", text) }
-    val body = RequestBody.create("application/json".toMediaType(), json.toString())
-    val req = Request.Builder().url("http://127.0.0.1:8765/api/check_screen").post(body).build()
+    private fun sendScreenTextToBrain(text: String) {
+        val json = JSONObject().apply { put("text", text) }
+        val body = RequestBody.create("application/json".toMediaType(), json.toString())
+        val req = Request.Builder().url("http://127.0.0.1:8765/api/check_screen").post(body).build()
 
-    http.newCall(req).enqueue(object : Callback {
-        override fun onFailure(call: Call, e: IOException) {
-            android.util.Log.e("JarvisMonitor", "Failed to reach brain: ${e.message}")
-        }
-        override fun onResponse(call: Call, response: Response) {
-            val resp = response.body?.string() ?: ""
-            if (resp.contains("lockdown_triggered")) {
-                handler.post { tts?.speak("Keyword detected. Internet locked for 30 minutes.") }
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                android.util.Log.e("JarvisMonitor", "Failed to reach brain: ${e.message}")
             }
-        }
-    })
-}
+            override fun onResponse(call: Call, response: Response) {
+                val resp = response.body?.string() ?: ""
+                if (resp.contains("lockdown_triggered")) {
+                    handler.post { tts?.speak("Keyword detected. Internet locked for 30 minutes.") }
+                }
+            }
+        })
+    }
 
     private fun onWakeWord() {
         if (isProcessing) return
@@ -148,12 +121,12 @@ private fun sendScreenTextToBrain(text: String) {
                 } catch (e: Exception) {} finally {
                     Handler(Looper.getMainLooper()).postDelayed({
                         isProcessing = false
-                        handler.post { updateNotif("Listening for wake word...") }
+                        handler.post { updateNotif("Monitoring screen...") }
                         wakeWord?.start()
                     }, 3000)
                 }
             }
-        }, 500)
+        }, 300)
     }
 
     private fun sendToBrain(wav: java.io.File): String {
@@ -173,7 +146,6 @@ private fun sendScreenTextToBrain(text: String) {
         toneGen?.release()
         LocalServer.stop()
         screenMonitor.shutdownNow()
-        if (wakeLock?.isHeld == true) wakeLock?.release()
         super.onDestroy() 
     }
 
