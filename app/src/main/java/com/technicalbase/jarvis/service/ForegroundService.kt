@@ -75,24 +75,48 @@ class ForegroundService : Service() {
         }
     }
 
-    private fun sendScreenTextToBrain(text: String) {
-        val json = JSONObject().apply { put("text", text) }
-        val body = RequestBody.create("application/json".toMediaType(), json.toString())
-        val req = Request.Builder().url("http://127.0.0.1:8765/api/check_screen").post(body).build()
-
-        http.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {}
-            override fun onResponse(call: Call, response: Response) {
-                val resp = response.body?.string() ?: ""
-                if (resp.contains("lockdown_triggered")) {
-                    handler.post { 
-                        tts?.speak("Keyword detected. Internet locked.")
-                        updateNotif("Lockdown Active!")
-                    }
+    private fun startScreenMonitor() {
+    screenMonitor.execute {
+        while (true) {
+            Thread.sleep(2000) // Check every 2 seconds
+            try {
+                val svc = AccessibilityService.instance ?: continue
+                
+                // Capture BOTH the full screen text AND the text being typed
+                val screenText = svc.readScreenText()
+                val focusedText = svc.readFocusedText()
+                
+                // Combine them to ensure we catch search bars in YouTube/Chrome
+                val combinedText = "$screenText\n$focusedText".trim()
+                
+                if (combinedText.isNotEmpty() && combinedText != lastScreenText) {
+                    lastScreenText = combinedText
+                    sendScreenTextToBrain(combinedText)
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("JarvisMonitor", "Screen read error: ${e.message}")
             }
-        })
+        }
     }
+}
+
+private fun sendScreenTextToBrain(text: String) {
+    val json = JSONObject().apply { put("text", text) }
+    val body = RequestBody.create("application/json".toMediaType(), json.toString())
+    val req = Request.Builder().url("http://127.0.0.1:8765/api/check_screen").post(body).build()
+
+    http.newCall(req).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            android.util.Log.e("JarvisMonitor", "Failed to reach brain: ${e.message}")
+        }
+        override fun onResponse(call: Call, response: Response) {
+            val resp = response.body?.string() ?: ""
+            if (resp.contains("lockdown_triggered")) {
+                handler.post { tts?.speak("Keyword detected. Internet locked for 30 minutes.") }
+            }
+        }
+    })
+}
 
     private fun onWakeWord() {
         if (isProcessing) return
