@@ -174,12 +174,16 @@ class VpnService : BaseVpnService() {
     }
 
     private fun scheduleExpiry() {
-        val remaining = deadlineMs - System.currentTimeMillis()
-        if (remaining <= 0) { stopLockdown(); return }
-        worker.execute {
-            try { Thread.sleep(remaining) } catch (_: InterruptedException) {}
-            if (System.currentTimeMillis() >= deadlineMs) stopLockdown()
+    worker.execute {
+        // Check the clock every 5 seconds instead of sleeping for 30 minutes straight
+        while (blocked && System.currentTimeMillis() < deadlineMs) {
+            try { Thread.sleep(5000) } catch (_: InterruptedException) {}
         }
+        // Once time is up, strictly turn it off
+        if (blocked && System.currentTimeMillis() >= deadlineMs) {
+            stopLockdown()
+        }
+    }
     }
 
     private fun stateFile(): File = File(filesDir, STATE_FILE)
