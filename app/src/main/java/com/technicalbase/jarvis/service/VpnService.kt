@@ -24,8 +24,6 @@ class VpnService : BaseVpnService() {
 
         @Volatile var instance: VpnService? = null
 
-        fun isRunning(): Boolean = instance != null
-
         fun start(ctx: Context, durationMin: Int, kind: String, reason: String) {
             val i = Intent(ctx, VpnService::class.java)
             i.action = "START"
@@ -66,7 +64,7 @@ class VpnService : BaseVpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // MUST call startForeground() immediately — otherwise Android kills us
-        startForeground(NOTIF_ID, buildNotification("Jarvis VPN"))
+        startForeground(NOTIF_ID, buildNotification("Jarvis Lockdown Active"))
 
         val action = intent?.action ?: "RESTORE"
 
@@ -132,17 +130,18 @@ class VpnService : BaseVpnService() {
         val builder = Builder()
             .setSession("Jarvis")
             .addAddress("10.111.222.1", 32)
-            .addRoute("0.0.0.0", 0)
+            .addRoute("0.0.0.0", 0) // Route ALL IPv4 traffic
             .addAddress("fd00:1:fd00:1::1", 128)
-            .addRoute("::", 0)
+            .addRoute("::", 0) // Route ALL IPv6 traffic
             .setBlocking(true)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            // Explicitly disallow our own app + Termux so we can still control it
             try {
+                // Exclude Jarvis and Termux so we can still control the phone
                 builder.addDisallowedApplication(packageName)
                 builder.addDisallowedApplication("com.termux")
             } catch (_: Exception) {}
@@ -164,7 +163,7 @@ class VpnService : BaseVpnService() {
                 while (blocked && !Thread.currentThread().isInterrupted) {
                     val n = inStream.read(buf)
                     if (n < 0) break
-                    // Discard
+                    // Discard the packets — this is what blocks the internet
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "drain ended: ${e.message}")
