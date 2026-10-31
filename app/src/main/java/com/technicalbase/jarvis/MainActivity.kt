@@ -382,16 +382,26 @@ class MainActivity : AppCompatActivity() {
     // ==========================================
     private fun showDiagnosticsScreen(projectId: String) {
         mainContainer.removeAllViews()
-        mainContainer.addView(TextView(this).apply { text = "Diagnostics: $projectId"; textSize = 20f; setTypeface(null, Typeface.BOLD); setPadding(0,0,0,24) })
+        
+        val headerLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        headerLayout.addView(TextView(this).apply { text = "Diagnostics"; textSize = 24f; setTypeface(null, Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) })
+        mainContainer.addView(headerLayout)
+
+        mainContainer.addView(Button(this).apply {
+            text = "🔄 Refresh Logs"
+            setOnClickListener { showDiagnosticsScreen(projectId) }
+        })
 
         val scroll = ScrollView(this)
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 24, 0, 24) }
         scroll.addView(list)
         mainContainer.addView(scroll)
 
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$projectId").build()
         http.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {}
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { list.addView(TextView(this@MainActivity).apply { text = "Error connecting to Brain." }) }
+            }
             override fun onResponse(call: Call, response: Response) {
                 val body = response.body?.string()
                 runOnUiThread {
@@ -400,25 +410,20 @@ class MainActivity : AppCompatActivity() {
                         val diags = o.optJSONArray("diagnostics")
                         
                         if (diags == null || diags.length() == 0) {
-                            list.addView(TextView(this@MainActivity).apply { text = "No issues detected so far." })
+                            list.addView(TextView(this@MainActivity).apply { text = "No diagnostics recorded yet. Hit Retry or start a build."; setTextColor(Color.GRAY) })
                         } else {
                             for (i in 0 until diags.length()) {
                                 val d = diags.getJSONObject(i)
-                                val issue = d.optString("issue", "Unknown Error")
+                                val stage = d.optString("stage", "Step $i")
+                                val issue = d.optString("issue", "Unknown")
                                 val detail = d.optString("detail", "")
-                                val fix = d.optString("fix", "")
-                                val status = d.optString("status", "")
+                                val status = d.optString("status", "info")
                                 
                                 val card = LinearLayout(this@MainActivity).apply {
-                                    orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24)
-                                    setBackgroundColor(Color.parseColor("#222222"))
+                                    orientation = LinearLayout.VERTICAL
+                                    setPadding(32, 32, 32, 32)
                                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0,0,0,24) }
                                 }
                                 
-                                var colorHex = "#FF9800"
-                                if (status == "success" || status == "fixed") colorHex = "#4CAF50"
-                                if (status == "failed") colorHex = "#F44336"
-                                
-                                card.addView(TextView(this@MainActivity).apply { text = "⚠️ $issue"; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor(colorHex)); textSize = 16f })
-                                card.addView(TextView(this@MainActivity).apply { text = "Details: $detail"; setPadding(0,8,0,8); textSize = 12f; setTextColor(Color.LTGRAY) })
-                       
+                                var bgColor = "#1E1E1E"
+         
