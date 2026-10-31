@@ -11,6 +11,29 @@ class AccessibilityService : BaseAS() {
         @Volatile
         var instance: AccessibilityService? = null
             private set
+
+        // --- THE BLACKLIST ---
+        // Jarvis will COMPLETELY IGNORE these apps (no screen reading, no keywords)
+        private val IGNORED_PACKAGES = setOf(
+            // WhatsApp
+            "com.whatsapp",
+            "com.whatsapp.w4b", // WhatsApp Business
+            
+            // Payment & Banking (India)
+            "com.google.android.apps.nbu.paisa.user", // GPay
+            "com.phonepe.app",                        // PhonePe
+            "net.one97.paytm",                        // Paytm
+            "in.org.npci.upiapp",                     // BHIM
+            "com.sbi.lotusintouch",                   // SBI
+            "com.icicibank.pockets",                  // ICICI
+            "com.msf.kbank.mobile",                   // Kotak
+            "com.hdfc.mobilebanking",                 // HDFC
+            
+            // System UI & Our own apps
+            "com.android.systemui",
+            "com.termux",
+            "com.technicalbase.jarvis"
+        )
     }
 
     @Volatile var lastForegroundPackage: String = ""
@@ -32,17 +55,32 @@ class AccessibilityService : BaseAS() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
-        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            e.packageName?.let { lastForegroundPackage = it.toString() }
+        val currentPkg = e.packageName?.toString() ?: ""
+
+        // 1. If the current app is in the blacklist, IMMEDIATELY ignore it
+        if (IGNORED_PACKAGES.contains(currentPkg)) {
+            return
         }
+
+        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastForegroundPackage = currentPkg
+        }
+        
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
             e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            
             val root = rootInActiveWindow ?: return
+            
+            // Double check the root package just to be safe
+            val rootPkg = root.packageName?.toString() ?: ""
+            if (IGNORED_PACKAGES.contains(rootPkg)) return
+
             lastScreenText = collectAllText(root).take(10000)
         }
     }
 
+    // --- Reading & Interaction Functions (Required by LocalServer) ---
     private fun collectAllText(node: AccessibilityNodeInfo?): String {
         if (node == null) return ""
         val sb = StringBuilder()
@@ -66,18 +104,23 @@ class AccessibilityService : BaseAS() {
 
     fun readScreenText(): String {
         val root = rootInActiveWindow ?: return lastScreenText
+        val rootPkg = root.packageName?.toString() ?: ""
+        if (IGNORED_PACKAGES.contains(rootPkg)) return ""
+        
         return collectAllText(root)
     }
 
     fun readFocusedText(): String {
         val root = rootInActiveWindow ?: return ""
+        val rootPkg = root.packageName?.toString() ?: ""
+        if (IGNORED_PACKAGES.contains(rootPkg)) return ""
+        
         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         return focused?.text?.toString() ?: ""
     }
 
     fun currentForeground(): String = lastForegroundPackage
 
-    // --- RESTORED FUNCTIONS FOR LOCALSERVER.KT ---
     fun typeText(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
