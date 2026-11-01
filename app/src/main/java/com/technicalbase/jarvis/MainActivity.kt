@@ -154,8 +154,8 @@ class MainActivity : AppCompatActivity() {
                     sendToBrain(text, "chat_ui", onSuccess = { reply ->
                         chatHistory.append("Jarvis: $reply\n\n")
                         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-                    }, onFailure = {
-                        chatHistory.append("System: Brain offline.\n\n")
+                    }, onFailure = { errorMsg ->
+                        chatHistory.append("Error: $errorMsg\n\n")
                         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
                     })
                 }
@@ -188,11 +188,12 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = "Saving..."
                     
                     sendToBrain(finalText, "training_ui", onSuccess = { reply ->
+                        statusText.setTextColor(Color.GREEN)
                         statusText.text = reply
                         input.setText("")
-                    }, onFailure = {
+                    }, onFailure = { errorMsg ->
                         statusText.setTextColor(Color.RED)
-                        statusText.text = "Error: Brain offline."
+                        statusText.text = "Error: $errorMsg"
                     })
                 }
             }
@@ -219,8 +220,8 @@ class MainActivity : AppCompatActivity() {
                     sendToBrain("build a custom project: $text", "android_app", onSuccess = { 
                         Toast.makeText(this@MainActivity, "Build started!", Toast.LENGTH_SHORT).show()
                         showHomeScreen() 
-                    }, onFailure = {
-                        Toast.makeText(this@MainActivity, "Brain offline.", Toast.LENGTH_SHORT).show()
+                    }, onFailure = { errorMsg ->
+                        Toast.makeText(this@MainActivity, "Error: $errorMsg", Toast.LENGTH_LONG).show()
                     })
                 }
             }
@@ -557,21 +558,28 @@ class MainActivity : AppCompatActivity() {
         if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn, retryBtn) }, 2000)
     }
 
-    private fun sendToBrain(text: String, source: String, onSuccess: (String) -> Unit, onFailure: () -> Unit) {
+    private fun sendToBrain(text: String, source: String, onSuccess: (String) -> Unit, onFailure: (String) -> Unit) {
         val json = JSONObject().apply { put("text", text); put("source", source) }
         val body = RequestBody.create("application/json".toMediaType(), json.toString())
         val req = Request.Builder().url("http://127.0.0.1:8765/intent").header("X-Jarvis-Token", "change-me-on-first-boot").post(body).build()
 
         http.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) { runOnUiThread { onFailure() } }
+            override fun onFailure(call: Call, e: IOException) { runOnUiThread { onFailure("Brain offline.") } }
             override fun onResponse(call: Call, response: Response) {
                 val respBody = response.body?.string()
                 runOnUiThread {
                     try {
                         val o = JSONObject(respBody ?: "{}")
-                        onSuccess(o.optString("text", "No reply"))
+                        val isOk = o.optBoolean("ok", false)
+                        val replyText = o.optString("text", "No reply")
+                        
+                        if (isOk) {
+                            onSuccess(replyText)
+                        } else {
+                            onFailure(replyText)
+                        }
                     } catch (e: Exception) {
-                        onSuccess("Parsed error: ${e.message}")
+                        onFailure("Parse error: ${e.message}")
                     }
                 }
             }
