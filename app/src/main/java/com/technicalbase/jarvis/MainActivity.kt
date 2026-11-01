@@ -426,4 +426,162 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 
                                 var bgColor = "#1E1E1E"
-         
+                                var icon = "ℹ️"
+                                
+                                if (status == "success") { bgColor = "#1B5E20"; icon = "✅" }
+                                else if (status == "failed") { bgColor = "#B71C1C"; icon = "❌" }
+                                else if (status == "info") { bgColor = "#0D47A1"; icon = "🔵" }
+                                
+                                card.setBackgroundColor(Color.parseColor(bgColor))
+                                
+                                card.addView(TextView(this@MainActivity).apply { 
+                                    text = "$icon $stage"
+                                    setTypeface(null, Typeface.BOLD)
+                                    setTextColor(Color.WHITE)
+                                    textSize = 16f 
+                                })
+                                
+                                card.addView(TextView(this@MainActivity).apply { 
+                                    text = issue
+                                    setTextColor(Color.LTGRAY)
+                                    textSize = 14f
+                                    setPadding(0, 8, 0, 8)
+                                })
+                                
+                                if (detail.isNotEmpty()) {
+                                    card.addView(TextView(this@MainActivity).apply { 
+                                        text = detail
+                                        setTextColor(Color.parseColor("#E0E0E0"))
+                                        textSize = 12f
+                                        typeface = Typeface.MONOSPACE
+                                    })
+                                }
+                                
+                                list.addView(card)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        list.addView(TextView(this@MainActivity).apply { text = "Error parsing diagnostics: ${e.message}" })
+                    }
+                }
+            }
+        })
+
+        mainContainer.addView(Button(this).apply { text = "⬅ Back to Status"; setOnClickListener { showStatusScreen(projectId) } })
+    }
+
+    // ==========================================
+    // SCREEN 8: SETTINGS & PERMISSIONS
+    // ==========================================
+    private fun showSettingsScreen() {
+        mainContainer.removeAllViews()
+        mainContainer.addView(TextView(this).apply { text = "Settings"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
+
+        mainContainer.addView(Button(this).apply {
+            text = "1. Start Background Service"
+            setOnClickListener { ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, ForegroundService::class.java)); Toast.makeText(this@MainActivity, "Started", Toast.LENGTH_SHORT).show() }
+        })
+        mainContainer.addView(Button(this).apply {
+            text = "2. Enable Accessibility"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        })
+        mainContainer.addView(Button(this).apply {
+            text = "3. Grant VPN permission"
+            setOnClickListener {
+                val prep = AndroidVpnService.prepare(this@MainActivity)
+                if (prep != null) startActivityForResult(prep, 100)
+            }
+        })
+        mainContainer.addView(Button(this).apply {
+            text = "4. Disable battery optimization"
+            setOnClickListener {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    i.data = Uri.parse("package:$packageName")
+                    try { startActivity(i) } catch (_: Exception) {}
+                }
+            }
+        })
+        mainContainer.addView(Button(this).apply { text = "⬅ Back"; setOnClickListener { showHomeScreen() } })
+    }
+
+    // ==========================================
+    // HELPERS & POLLING
+    // ==========================================
+    private fun pollProjectStatus(id: String, pb: ProgressBar, pt: TextView, lt: TextView, viewBtn: Button, retryBtn: Button) {
+        if (!isPolling || currentProjectId != id) return
+        val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$id").build()
+        
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
+                if (body != null) {
+                    try {
+                        val o = JSONObject(body)
+                        val active = o.optBoolean("active", false)
+                        val progress = o.optInt("progress", 0)
+                        val step = o.optString("step_name", "")
+                        
+                        runOnUiThread {
+                            pb.progress = progress
+                            pt.text = "Progress: $progress%\nStatus: $step"
+                            
+                            if (!active && progress < 100) retryBtn.visibility = View.VISIBLE 
+                            else retryBtn.visibility = View.GONE
+                            
+                            val logsArray = o.optJSONArray("logs")
+                            if (logsArray != null) {
+                                val sb = StringBuilder()
+                                for (i in 0 until logsArray.length()) { 
+                                    val logStr = logsArray.getString(i)
+                                    sb.append(logStr).append("\n")
+                                    if (logStr.contains("Project URL:")) {
+                                        viewBtn.visibility = View.VISIBLE
+                                        viewBtn.tag = logStr.substringAfter("Project URL:").trim()
+                                    }
+                                }
+                                lt.text = sb.toString()
+                            }
+                            
+                            if (!active && progress == 100) {
+                                pt.text = "Build Complete!"
+                                isPolling = false
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        })
+        if (isPolling) handler.postDelayed({ pollProjectStatus(id, pb, pt, lt, viewBtn, retryBtn) }, 2000)
+    }
+
+    private fun sendToBrain(text: String, source: String, onSuccess: (String) -> Unit, onFailure: () -> Unit) {
+        val json = JSONObject().apply { put("text", text); put("source", source) }
+        val body = RequestBody.create("application/json".toMediaType(), json.toString())
+        val req = Request.Builder().url("http://127.0.0.1:8765/intent").header("X-Jarvis-Token", "change-me-on-first-boot").post(body).build()
+
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { runOnUiThread { onFailure() } }
+            override fun onResponse(call: Call, response: Response) {
+                val respBody = response.body?.string()
+                runOnUiThread {
+                    try {
+                        val o = JSONObject(respBody ?: "{}")
+                        onSuccess(o.optString("text", "No reply"))
+                    } catch (e: Exception) {
+                        onSuccess("Parsed error: ${e.message}")
+                    }
+                }
+            }
+        })
+    }
+
+    private fun requestPermissions() {
+        val perms = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.RECORD_AUDIO)
+        if (perms.isNotEmpty()) ActivityCompat.requestPermissions(this, perms.toTypedArray(), 1001)
+    }
+}
