@@ -15,6 +15,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.method.ScrollingMovementMethod
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -37,11 +38,23 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         requestPermissions()
 
+        // 1. Create the main container
         mainContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
         }
-        setContentView(mainContainer)
+
+        // 2. Wrap it in a ScrollView for infinite scrolling across all screens
+        val scrollView = ScrollView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            isFillViewport = true
+            addView(mainContainer)
+        }
+
+        setContentView(scrollView)
         
         showHomeScreen()
     }
@@ -131,14 +144,13 @@ class MainActivity : AppCompatActivity() {
         mainContainer.removeAllViews()
         mainContainer.addView(TextView(this).apply { text = "Universal AI Chat"; textSize = 20f; setTypeface(null, Typeface.BOLD) })
         
-        val scroll = ScrollView(this)
+        // Removed the inner ScrollView because the whole screen now scrolls
         val chatHistory = TextView(this).apply { 
             text = "Jarvis: How can I help you today?\n\n"
             textSize = 14f
             setPadding(0, 24, 0, 24)
         }
-        scroll.addView(chatHistory)
-        mainContainer.addView(scroll)
+        mainContainer.addView(chatHistory)
 
         val input = EditText(this).apply { hint = "Ask anything, write an article, or draw a picture..."; setMinLines(2) }
         mainContainer.addView(input)
@@ -153,10 +165,8 @@ class MainActivity : AppCompatActivity() {
                     
                     sendToBrain(text, "chat_ui", onSuccess = { reply ->
                         chatHistory.append("Jarvis: $reply\n\n")
-                        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
                     }, onFailure = { errorMsg ->
-                        chatHistory.append("Error: $errorMsg\n\n")
-                        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+                        chatHistory.append("System Error: $errorMsg\n\n")
                     })
                 }
             }
@@ -188,7 +198,6 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = "Saving..."
                     
                     sendToBrain(finalText, "training_ui", onSuccess = { reply ->
-                        statusText.setTextColor(Color.GREEN)
                         statusText.text = reply
                         input.setText("")
                     }, onFailure = { errorMsg ->
@@ -259,10 +268,8 @@ class MainActivity : AppCompatActivity() {
         })
         mainContainer.addView(headerLayout)
 
-        val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        scroll.addView(list)
-        mainContainer.addView(scroll)
+        mainContainer.addView(list)
 
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects").build()
         http.newCall(req).enqueue(object : Callback {
@@ -393,10 +400,8 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { showDiagnosticsScreen(projectId) }
         })
 
-        val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 24, 0, 24) }
-        scroll.addView(list)
-        mainContainer.addView(scroll)
+        mainContainer.addView(list)
 
         val req = Request.Builder().url("http://127.0.0.1:8765/api/projects/$projectId").build()
         http.newCall(req).enqueue(object : Callback {
