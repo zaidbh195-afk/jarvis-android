@@ -1,8 +1,11 @@
 package com.technicalbase.jarvis.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService as BaseVpnService
@@ -21,21 +24,27 @@ class VpnService : BaseVpnService() {
         private const val CHANNEL = "jarvis_vpn"
         private const val NOTIF_ID = 2002
         private const val STATE_FILE = "lockdown.json"
+        private const val ACTION_EXPIRED = "EXPIRED"
 
         @Volatile var instance: VpnService? = null
 
         fun start(ctx: Context, durationMin: Int, kind: String, reason: String) {
-            val i = Intent(ctx, VpnService::class.java)
-            i.action = "START"
-            i.putExtra("duration_min", durationMin)
-            i.putExtra("kind", kind)
-            i.putExtra("reason", reason)
-            ctx.startForegroundService(i)
+            val i = Intent(ctx, VpnService::class.java).apply {
+                action = "START"
+                putExtra("duration_min", durationMin)
+                putExtra("kind", kind)
+                putExtra("reason", reason)
+            }
+            // Use startForegroundService for Android 12+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(i)
+            } else {
+                ctx.startService(i)
+            }
         }
 
         fun stop(ctx: Context) {
-            val i = Intent(ctx, VpnService::class.java)
-            i.action = "STOP"
+            val i = Intent(ctx, VpnService::class.java).apply { action = "STOP" }
             ctx.startService(i)
         }
     }
@@ -63,7 +72,7 @@ class VpnService : BaseVpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // MUST call startForeground() immediately — otherwise Android kills us
+        // MUST call startForeground() immediately to prevent Android from killing the service
         startForeground(NOTIF_ID, buildNotification("Jarvis Lockdown Active"))
 
         val action = intent?.action ?: "RESTORE"
@@ -79,13 +88,18 @@ class VpnService : BaseVpnService() {
             }
             "STOP" -> {
                 if (kind == "keyword") {
-                    Log.w(TAG, "STOP refused — keyword lockdown")
+                    Log.w(TAG, "STOP refused — keyword lockdown active")
                 } else {
                     stopLockdown()
                 }
             }
+            ACTION_EXPIRED -> {
+                Log.i(TAG, "Hardware Alarm fired. Stopping lockdown.")
+                stopLockdown()
+            }
             "RESTORE" -> {
                 if (deadlineMs > 0 && System.currentTimeMillis() < deadlineMs) {
+                    // If app restarted, re-arm the alarm and re-establish tunnel
                     blocked = true
                     establishTunnel()
                     scheduleExpiry()
@@ -107,7 +121,7 @@ class VpnService : BaseVpnService() {
         saveState()
         establishTunnel()
         scheduleExpiry()
-        Log.i(TAG, "lockdown started until $deadlineMs kind=$k tunnel=$tunnelReady")
+        Log.i(TAG, "Lockdown started until $deadlineMs kind=$k tunnel=$tunnelReady")
     }
 
     private fun stopLockdown() {
@@ -117,23 +131,28 @@ class VpnService : BaseVpnService() {
         kind = "none"
         reasonText = ""
         saveState()
+        
+        // Cancel the hardware alarm
+        cancelExpiryAlarm()
+        
         try { tunnel?.close() } catch (_: Exception) {}
         tunnel = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        Log.i(TAG, "lockdown ended")
+        Log.i(TAG, "Lockdown ended")
     }
 
     private fun establishTunnel() {
         if (tunnel != null && tunnelReady) return
 
         val builder = Builder()
-            .setSession("Jarvis")
+            .setSession("Jarvis Focus Lockdown")
             .addAddress("10.111.222.1", 32)
             .addRoute("0.0.0.0", 0) // Route ALL IPv4 traffic
             .addAddress("fd00:1:fd00:1::1", 128)
             .addRoute("::", 0) // Route ALL IPv6 traffic
             .setBlocking(true)
+            .setMtu(1500)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
@@ -141,7 +160,7 @@ class VpnService : BaseVpnService() {
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
-                // Exclude Jarvis and Termux so we can still control the phone
+                // Exclude Jarvis and Termux so we don't cut our own control lines
                 builder.addDisallowedApplication(packageName)
                 builder.addDisallowedApplication("com.termux")
             } catch (_: Exception) {}
@@ -163,28 +182,48 @@ class VpnService : BaseVpnService() {
                 while (blocked && !Thread.currentThread().isInterrupted) {
                     val n = inStream.read(buf)
                     if (n < 0) break
-                    // Discard the packets — this is what blocks the internet
+                    // Intentionally discard packets to block internet
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "drain ended: ${e.message}")
+                Log.w(TAG, "Tunnel drain ended: ${e.message}")
             } finally {
                 try { inStream.close() } catch (_: Exception) {}
             }
         }
     }
 
+    // --- ALARMMANAGER FIX ---
     private fun scheduleExpiry() {
-    worker.execute {
-        // Check the clock every 5 seconds instead of sleeping for 30 minutes straight
-        while (blocked && System.currentTimeMillis() < deadlineMs) {
-            try { Thread.sleep(5000) } catch (_: InterruptedException) {}
-        }
-        // Once time is up, strictly turn it off
-        if (blocked && System.currentTimeMillis() >= deadlineMs) {
-            stopLockdown()
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, VpnService::class.java).apply { action = ACTION_EXPIRED }
+        val pendingIntent = PendingIntent.getService(
+            this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // setExactAndAllowWhileIdle forces the CPU to wake up exactly at the deadline,
+        // bypassing Android's Doze mode restrictions.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, deadlineMs, pendingIntent)
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, deadlineMs, pendingIntent)
+            }
+            Log.i(TAG, "Hardware Wakeup Alarm set for $deadlineMs")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set alarm: ${e.message}")
         }
     }
+
+    private fun cancelExpiryAlarm() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, VpnService::class.java).apply { action = ACTION_EXPIRED }
+        val pendingIntent = PendingIntent.getService(
+            this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(pendingIntent)
+        Log.i(TAG, "Hardware Wakeup Alarm cancelled")
     }
+    // ------------------------
 
     private fun stateFile(): File = File(filesDir, STATE_FILE)
 
